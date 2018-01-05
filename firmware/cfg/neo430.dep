@@ -1,3 +1,4 @@
+src ../../rtl/core/neo430_package.vhd
 src ../../rtl/core/neo430_addr_gen.vhd
 src ../../rtl/core/neo430_alu.vhd
 src ../../rtl/core/neo430_application_image.vhd
@@ -9,7 +10,6 @@ src ../../rtl/core/neo430_dmem.vhd
 src ../../rtl/core/neo430_gpio.vhd
 src ../../rtl/core/neo430_imem.vhd
 src ../../rtl/core/neo430_muldiv.vhd
-src ../../rtl/core/neo430_package.vhd
 src ../../rtl/core/neo430_reg_file.vhd
 src ../../rtl/core/neo430_sysconfig.vhd
 src ../../rtl/core/neo430_timer.vhd
