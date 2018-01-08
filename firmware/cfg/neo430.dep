@@ -17,3 +17,6 @@ src ../../rtl/core/neo430_top.vhd
 src ../../rtl/core/neo430_usart.vhd
 src ../../rtl/core/neo430_wb_interface.vhd
 src ../../rtl/core/neo430_wdt.vhd
+
+# Pull in TCL that will put neo430_package etc. into neo430, not work.
+src neo430.tcl
