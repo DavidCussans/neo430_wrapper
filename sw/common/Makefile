@@ -30,7 +30,7 @@
 # USER CONFIGURATION
 #-------------------------------------------------------------------------------
 # Path of compiler binaries:
-MSP430GCC_BIN_PATH ?= /mnt/c/msp430-gcc-6.4.0.32_linux64/bin
+MSP430GCC_BIN_PATH ?= /software/CAD/ti/msp430_gcc/bin/
 
 # Compiler effort (-Os = optimize for size)
 EFFORT = -Os
