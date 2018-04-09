@@ -38,15 +38,23 @@ uint8_t wb_config = 1;
 
 // Prototypes
 void setup_i2c(void);
-uint8_t read_i2c_address(uint8_t addr , uint8_t n , uint8_t data[]);
-bool checkack();
-uint8_t write_i2c_address(uint8_t addr , uint8_t nToWrite , uint8_t data[], bool stop);
+int16_t read_i2c_address(uint8_t addr , uint8_t n , uint8_t data[]);
+bool checkack(uint32_t delayVal);
+int16_t write_i2c_address(uint8_t addr , uint8_t nToWrite , uint8_t data[], bool stop);
 void dump_wb(void);
 uint32_t hex_str_to_uint32(char *buffer);
 void delay(uint32_t n );
+bool enable_i2c_bridge();
+int16_t read_E24AA025E48T();
+uint16_t zero_buffer( uint8_t buffer[] , uint16_t elements);
+int16_t write_Prom();
+uint32_t read_Prom();
+int16_t  read_i2c_prom( uint8_t startAddress , uint8_t wordsToRead , uint8_t buffer[] );
+int16_t write_i2c_prom( uint8_t startAddress , uint8_t wordsToWrite, uint8_t buffer[] );
+void uint8_to_decimal_str( uint8_t value , char *buffer) ;
 
 #define DEBUG 1
-#define DELAYVAL 2048
+#define DELAYVAL 512
 
 // Configuration
 #define MAX_CMD_LENGTH 16
@@ -75,10 +83,17 @@ void delay(uint32_t n );
 #define ADDR_DATA 0xC
 #define ADDR_CMD_STAT 0x10
 
-// I2C address of EEPROM
+// I2C address of Crypto EEPROM on AX3
 #define MYSLAVE 0x64
 
+// I2C address of UiD EEPROM on TLU
+#define EEPROMADDRESS  0x50
+
+// PROM memory address start...
+#define PROMMEMORYADDR 0x00
+
 uint8_t buffer[MAX_N];
+char command[MAX_CMD_LENGTH];
 
 
 /* ------------------------------------------------------------
@@ -87,16 +102,17 @@ uint8_t buffer[MAX_N];
 int main(void) {
 
   //uint16_t length = 0;
-  char command[MAX_CMD_LENGTH];
+  uint16_t length = 0;
+  uint16_t selection = 0;
+  uint16_t uid;
 
-  uint8_t wordsToRead = 4;
 
   // setup UART
   uart_set_baud(BAUD_RATE);
   USI_CT = (1<<USI_CT_EN);
 
   uart_br_print("\n--------------------------------------\n"
-                  "--- I2C/ Wishbone Explorer Terminal --\n"
+                  "--- I2C Wishbone Explorer Terminal --\n"
                   "--------------------------------------\n\n");
 
   // check if WB unit was synthesized, exit if no WB is available
@@ -109,33 +125,97 @@ int main(void) {
   // set for 32 bit transfer
   //wb_config = 4;
 
+  setup_i2c();
+       
   for (;;) {
 
-    uart_br_print("\nPress a key to start\n");
+    uart_br_print("\nEnter a command:> ");
 
     //length = uart_scan(command, MAX_CMD_LENGTH);
-    uart_scan(command, MAX_CMD_LENGTH);
+    length = uart_scan(command, MAX_CMD_LENGTH);
     uart_br_print("\n");
 
-     setup_i2c();
+    if (!length) // nothing to be done
+     continue;
 
-     buffer[0] = 0x02;
-     buffer[1] = 0x00;
-     write_i2c_address(MYSLAVE , 2 , buffer, false );
-     read_i2c_address(MYSLAVE , wordsToRead , buffer);
+        // decode input
+    selection = 0;
+    if (!strcmp(command, "help"))
+      selection = 1;
+    if (!strcmp(command, "enable"))
+      selection = 2;
+    if (!strcmp(command, "id"))
+      selection = 3;
+    if (!strcmp(command, "write"))
+      selection = 4;
+    if (!strcmp(command, "read"))
+      selection = 5;
+    if (!strcmp(command, "reset"))
+      selection = 6;
 
-     for (uint8_t i=0; i< wordsToRead; i++){
-       uart_br_print("\n");
-       uart_print_hex_dword(buffer[i]);
+        // execute command
+    switch(selection) {
 
-     }
+      case 1: // print help menu
+        uart_br_print("Available commands:\n"
+                      " help   - show this text\n"
+                      " enable - enable I2C bridge on Enclustra\n"
+                      " id     - Read from E24AA025E48T Unique ID\n"
+                      " write  - write to E24AA025E48T PROM area \n"
+                      " read   - read from E24AA025E48T PROM area \n"
+                      " reset  - reset CPU\n"
+                      );
+        break;
 
-   }
+      case 2: // Enable I2C Bridge
+	     
+	enable_i2c_bridge();
+        break;
+
+      case 3: // read from Unique ID address
+	uid = read_E24AA025E48T();
+	uart_br_print("\nUID from E24AA025E48T = ");
+	uart_print_hex_dword(uid);
+	uart_br_print("\n");
+        break;
+
+      case 4: // write to PROM
+	write_Prom();
+        break;
+
+      case 5: // read from PROM
+	uid = read_Prom();
+	uart_br_print("\nData from PROM = \n");
+	uart_print_hex_dword(uid);
+	uart_br_print("\n");
+	uart_br_print("\nIP Address = 192.168.");
+	uint8_to_decimal_str( (uint8_t)(uid>>8)&0xFF  , command);
+	uart_br_print( command  );
+	uart_br_print( "."  );
+	uint8_to_decimal_str( (uint8_t)(uid)&0xFF  , command);
+	uart_br_print( command  );
+	uart_br_print( "\n"  );
+
+        break;
+
+      case 6: // restart
+        while ((USI_CT & (1<<USI_CT_UARTTXBSY)) != 0); // wait for current UART transmission
+        soft_reset();
+        break;
+
+      default: // invalid command
+        uart_br_print("Invalid command. Type 'help' to see all commands.\n");
+        break;
+    }
+    
+
+
+  }
      return 0;
 }
 
 
-bool checkack() {
+bool checkack(uint32_t delayVal) {
 
 #ifdef DEBUG
 uart_br_print("\nChecking ACK\n");
@@ -145,7 +225,7 @@ uart_br_print("\nChecking ACK\n");
   bool ack = false;
   uint8_t cmd_stat = 0;
   while (inprogress) {
-    delay(DELAYVAL);
+    delay(delayVal);
     cmd_stat = wishbone_read8(ADDR_CMD_STAT);
     inprogress = (cmd_stat & INPROGRESS) > 0;
     ack = (cmd_stat & RECVDACK) == 0;
@@ -169,6 +249,18 @@ void delay(uint32_t delayVal){
 
 
 /* ------------------------------------------------------------
+ * Zero buffer
+ * ------------------------------------------------------------ */
+uint16_t zero_buffer (uint8_t buffer[] , uint16_t elements) {
+
+  for (uint16_t i=0;i<elements;i++){
+    buffer[i] = 0;
+  }
+
+  return elements;
+}
+
+/* ------------------------------------------------------------
  * INFO Configure Wishbone adapter
  * ------------------------------------------------------------ */
 void setup_i2c(void) {
@@ -187,13 +279,6 @@ void setup_i2c(void) {
 // Enable core
   wishbone_write8(ADDR_CTRL, ENABLECORE);
 
-  uart_br_print("\nTake SDA low to wake up EEPROM.\n");
-  // write zero to SDA to wake up EEPROM
-  wishbone_write8(ADDR_DATA , 0x00 );
-  //  Set Command Register to 0x90 (write, start)
-  wishbone_write8(ADDR_CMD_STAT, STARTCMD | WRITECMD );
-  wishbone_write8(ADDR_CMD_STAT, STOPCMD);
-
   // Delay for at least 100us before proceeding
   delay(1000);
 
@@ -205,12 +290,17 @@ void setup_i2c(void) {
 /* ------------------------------------------------------------
  * INFO Read data from Wishbone address
  * ------------------------------------------------------------ */
-uint8_t read_i2c_address(uint8_t addr , uint8_t n , uint8_t data[]) {
+int16_t read_i2c_address(uint8_t addr , uint8_t n , uint8_t data[]) {
 
   //static uint8_t data[MAX_N];
 
   uint8_t val;
   bool ack;
+
+#ifdef DEBUG
+  uart_br_print("\nReading From I2C.\n");
+#endif
+
   addr &= 0x7f;
   addr = addr << 1;
   addr |= 0x1 ; // read bit
@@ -218,7 +308,7 @@ uint8_t read_i2c_address(uint8_t addr , uint8_t n , uint8_t data[]) {
   wishbone_write8(ADDR_CMD_STAT, STARTCMD | WRITECMD );
   ack = checkack(DELAYVAL);
   if (! ack) {
-      uart_br_print("\nNo ACK. Sending STOP.\n");
+      uart_br_print("\nread_i2c_address: No ACK. Sending STOP and terminating read.\n");
       wishbone_write8(ADDR_CMD_STAT, STOPCMD);
       return 0;
       }
@@ -231,27 +321,33 @@ uint8_t read_i2c_address(uint8_t addr , uint8_t n , uint8_t data[]) {
           wishbone_write8(ADDR_CMD_STAT, READCMD | ACK | STOPCMD); // <--- This tells the slave that it is the last word
         }
       ack = checkack(DELAYVAL);
-      uart_br_print("\nACK = ");
+
+#ifdef DEBUG
+      uart_br_print("\nread_i2c_address: ACK = ");
       uart_print_hex_byte( (uint8_t) ack );
       uart_br_print("\n");
-
+#endif
+      
       val = wishbone_read8(ADDR_DATA);
       data[i] = val & 0xff;
     }
 
-    return n;
+  return (int16_t) n;
 
 }
 
-uint8_t write_i2c_address(uint8_t addr , uint8_t nToWrite , uint8_t data[], bool stop) {
+int16_t write_i2c_address(uint8_t addr , uint8_t nToWrite , uint8_t data[], bool stop) {
 
-  uart_br_print("\nWriting to I2C.\n");
 
-  uint8_t nwritten = -1;
+  int16_t nwritten = -1;
   uint8_t val;
   bool ack;
   addr &= 0x7f;
   addr = addr << 1;
+
+#ifdef DEBUG
+  uart_br_print("\nWriting to I2C.\n");
+#endif
 
   // Set transmit register (write operation, LSB=0)
   wishbone_write8(ADDR_DATA , addr );
@@ -261,7 +357,7 @@ uint8_t write_i2c_address(uint8_t addr , uint8_t nToWrite , uint8_t data[], bool
   ack = checkack(DELAYVAL);
 
   if (! ack){
-    uart_br_print("\nNo ACK. Sending STOP.\n");
+    uart_br_print("\nwrite_i2c_address: No ACK in response to device-ID. Sending STOP and terminating.\n");
     wishbone_write8(ADDR_CMD_STAT, STOPCMD);
     return nwritten;
   }
@@ -282,10 +378,200 @@ uint8_t write_i2c_address(uint8_t addr , uint8_t nToWrite , uint8_t data[], bool
       nwritten += 1;
     }
 
-    if (stop) wishbone_write8(ADDR_CMD_STAT, STOPCMD);
-
+  if (stop) {
+#ifdef DEBUG
+    uart_br_print("\nwrite_i2c_address: Writing STOP\n");
+#endif
+    wishbone_write8(ADDR_CMD_STAT, STOPCMD);
+  } else {
+#ifdef DEBUG
+    uart_br_print("\nwrite_i2c_address: Returning without writing STOP\n");
+#endif
+  }
     return nwritten;
 }
+
+/*
+mystop=True
+   print "  Write RegDir to set I/O[7] to output:"
+   myslave= 0x21
+   mycmd= [0x01, 0x7F]
+   nwords= 1
+   master_I2C.write(myslave, mycmd, mystop)
+
+mystop=False
+   mycmd= [0x01]
+   master_I2C.write(myslave, mycmd, mystop)
+   res= master_I2C.read( myslave, nwords)
+   print "\tPost RegDir: ", res
+
+*/
+bool enable_i2c_bridge() {
+
+  bool mystop;
+  uint8_t I2CBRIDGE = 0x21;
+  uint8_t wordsToRead = 1;
+  uint8_t wordsForAddress = 1;
+  uint8_t wordsToWrite = 2;
+
+  uart_br_print("\nEnabling I2C bridge:\n");
+  buffer[0] = 0x01;
+  buffer[1] = 0x7F;
+  mystop = true;
+#ifdef DEBUG
+   uart_br_print("\nWriting 0x01,0x7F to I2CBRIDGE. Stop = true:\n");
+#endif
+  write_i2c_address(I2CBRIDGE , wordsToWrite , buffer, mystop );
+
+  mystop=false;
+  buffer[0] = 0x01;
+#ifdef DEBUG
+   uart_br_print("\nWriting 0x01 to I2CBRIDGE. Stop = false:\n");
+#endif
+  write_i2c_address(I2CBRIDGE , wordsForAddress , buffer, mystop );
+
+#ifdef DEBUG
+  zero_buffer(buffer , sizeof(buffer));
+#endif
+
+#ifdef DEBUG
+   uart_br_print("\nReading one word from I2CBRIDGE:\n");
+#endif  
+  read_i2c_address(I2CBRIDGE, wordsToRead , buffer);
+
+  uart_br_print("Post RegDir: ");
+  uart_print_hex_dword(buffer[0]);
+  uart_br_print("\n");
+
+  return true; // TODO: return a status, rather than True all the time...
+ 
+}
+
+/*
+#EEPROM BEGIN
+doEeprom= True
+if doEeprom:
+  zeEEPROM= E24AA025E48T(master_I2C, 0x57)
+  res=zeEEPROM.readEEPROM(0xfa, 6)
+  result="  EEPROM ID:\n\t"
+  for iaddr in res:
+      result+="%02x "%(iaddr)
+  print result
+#EEPROM END
+ */
+
+
+/* ---------------------------*
+ *  Read bytes from PROM      *
+ * ---------------------------*/
+int16_t  read_i2c_prom( uint8_t startAddress , uint8_t  wordsToRead, uint8_t buffer[] ){
+
+  bool mystop = false;
+
+  buffer[0] = startAddress;
+#ifdef DEBUG
+  uart_br_print(" read_i2c_prom: Writing device ID: ");
+#endif
+  write_i2c_address( EEPROMADDRESS , 1 , buffer, mystop );
+
+#ifdef DEBUG
+  uart_br_print("read_i2c_prom: Reading memory of EEPROM: ");
+  zero_buffer(buffer , wordsToRead);
+#endif
+
+  read_i2c_address( EEPROMADDRESS , wordsToRead , buffer);
+
+#ifdef DEBUG
+  uart_br_print("Data from EEPROM\n");
+  for (uint8_t i=0; i< wordsToRead; i++){
+    uart_br_print("\n");
+    uart_print_hex_dword(buffer[i]);    
+  }
+#endif
+
+  return wordsToRead;
+}
+
+/* ---------------------------*
+ *  Read UID from E24AA025E   *
+ * ---------------------------*/
+int16_t read_E24AA025E48T(){
+
+  uint8_t startAddress = 0xFA;
+  uint8_t wordsToRead = 6;
+  //  int16_t status;
+  uint16_t uid ;
+
+  //status =  read_i2c_prom( startAddress , wordsToRead, buffer );
+  read_i2c_prom( startAddress , wordsToRead, buffer );
+
+  uid = buffer[5] + (buffer[4]<<8);
+
+  return uid; // Returns bottom 16-bits of UID
+
+}
+
+/* ---------------------------*
+ *  Read 4 bytes from E24AA025E   *
+ * ---------------------------*/
+uint32_t read_Prom() {
+
+  uint8_t wordsToRead = 4;
+  //  int16_t status;
+  uint32_t uid ;
+
+  //status =  read_i2c_prom( startAddress , wordsToRead, buffer );
+  read_i2c_prom( PROMMEMORYADDR , wordsToRead, buffer );
+
+  uid = (uint32_t)buffer[3] + ((uint32_t)buffer[2]<<8) + ((uint32_t)buffer[1]<<16) + ((uint32_t)buffer[0]<<24);
+
+  return uid; // Returns 32 word read from PROM
+
+}
+
+
+int16_t write_Prom(){
+
+  uint8_t wordsToWrite = 4;
+ 
+  int16_t status = 0;
+  bool mystop = true;
+
+  uart_br_print("Enter hexadecimal data to write to PROM: 0x");
+  uart_scan(command, 9); // 8 hex chars for address plus '\0'
+  uint32_t data = hex_str_to_uint32(command);
+
+  // Pack data to write into buffer
+  buffer[0] = PROMMEMORYADDR;
+  
+  for (uint8_t i=0; i< wordsToWrite; i++){
+    buffer[i+1] = (data >> (i*8)) & 0xFF ;    
+  }
+
+  status = write_i2c_address(EEPROMADDRESS , (wordsToWrite+1), buffer, mystop);
+
+  return status;
+
+}
+
+/*
+int16_t write_i2c_prom( uint8_t startAddress , uint8_t wordsToWrite, uint8_t buffer[] ){
+
+  int16_t status = 0;
+  bool mystop = true;
+
+  buffer[0] = startAddress;
+
+  for (uint8_t i=0; i< wordsToWrite; i++){
+    buffer[i+1] = wordsToWrite;    
+  }
+
+  status = write_i2c_address(EEPROMADDRESS , (wordsToWrite+1), buffer, mystop);
+
+  return status;
+}
+*/
+
 /*
 def write(self, addr, data, stop=True):
     """Write data to the device with the given address."""
@@ -327,136 +613,6 @@ def write(self, addr, data, stop=True):
 
 */
 
-void read_wb_address(void) {
-
-  char buffer[9];
-
-  uart_br_print("Enter hexadecimal target address: 0x");
-  uart_scan(buffer, 9); // 8 hex chars for address plus '\0'
-  uint32_t address = hex_str_to_uint32(buffer);
-
-  uart_br_print("\nReading from [0x");
-  uart_print_hex_dword(address);
-  uart_br_print("]... ");
-
-  uint8_t r_data8 = 0;
-  uint16_t r_data16 = 0;
-  uint32_t r_data32 = 0;
-
-  // perform access
-  if (wb_config == 1)
-    r_data8 = wishbone_read8(address);
-  if (wb_config == 2)
-    r_data16 = wishbone_read16(address);
-  if (wb_config == 4)
-    r_data32 = wishbone_read32(address);
-
-  // print result
-  uart_br_print("Read data: 0x");
-  if (wb_config == 1)
-    uart_print_hex_byte(r_data8);
-  if (wb_config == 2)
-    uart_print_hex_word(r_data16);
-  if (wb_config == 4)
-    uart_print_hex_dword(r_data32);
-  uart_br_print("\n");
-}
-
-
-/* ------------------------------------------------------------
- * INFO Write data to Wishbone address
- * ------------------------------------------------------------ */
-void write_wb_address(void) {
-
-  char buffer[9];
-
-  uart_br_print("Enter hexadecimal target address: 0x");
-  uart_scan(buffer, 9); // 8 hex chars for address plus '\0'
-  uint32_t address = hex_str_to_uint32(buffer);
-
-  uart_br_print("\nEnter hexadecimal write data: 0x");
-  uart_scan(buffer, wb_config*2+1); // get right number of hex chars for data plus '\0'
-  uint32_t data = hex_str_to_uint32(buffer);
-
-  uart_br_print("\nWriting '0x");
-  uart_print_hex_dword(data);
-  uart_br_print("' to [0x");
-  uart_print_hex_dword(address);
-  uart_br_print("]... ");
-
-  uint8_t w_data8 = (uint8_t)data;
-  uint16_t w_data16 = (uint16_t)data;
-  uint32_t w_data32 = data;
-
-  // perform access
-  if (wb_config == 1)
-    wishbone_write8(address, w_data8);
-  if (wb_config == 2)
-    wishbone_write16(address, w_data16);
-  if (wb_config == 4)
-    wishbone_write32(address, w_data32);
-
-  uart_br_print("Done.\n");
-}
-
-
-/* ------------------------------------------------------------
- * INFO Dump data from Wishbone address
- * ------------------------------------------------------------ */
-void dump_wb(void) {
-
-  char buffer[9];
-  uint16_t i = 0;
-
-  uart_br_print("Enter hexadecimal start address: 0x");
-  uart_scan(buffer, 9); // 8 hex chars for address plus '\0'
-  uint32_t address = hex_str_to_uint32(buffer);
-
-  uart_br_print("\nPress any key to start.\n"
-                "You can abort dumping by pressing any key.\n");
-  while(!uart_char_received());
-
-  uint8_t r_data8 = 0;
-  uint16_t r_data16 = 0;
-  uint32_t r_data32 = 0;
-
-  while(1) {
-    uart_br_print("0x");
-    uart_print_hex_dword(address);
-    uart_br_print(":  ");
-
-    uint16_t border = 16 / wb_config;
-    for (i=0; i<border; i++) {
-
-      // perform access
-      if (wb_config == 1)
-        r_data8 = wishbone_read8(address);
-      if (wb_config == 2)
-        r_data16 = wishbone_read16(address);
-      if (wb_config == 4)
-        r_data32 = wishbone_read32(address);
-
-      if (wb_config == 1) {
-        uart_print_hex_byte(r_data8);
-        address += 1;
-      }
-      else if (wb_config == 2) {
-        uart_print_hex_word(r_data16);
-        address += 2;
-      }
-      else {
-        uart_print_hex_dword(r_data32);
-        address += 4;
-      }
-      uart_putc(' ');
-
-    }
-    uart_br_print("\n");
-    if (uart_char_received()) // abort
-      return;
-  }
-}
-
 
 /* ------------------------------------------------------------
  * INFO Hex-char-string conversion function
@@ -487,3 +643,56 @@ uint32_t hex_str_to_uint32(char *buffer) {
 
   return res;
 }
+
+/* -----------------------------------
+ * Convert uint8_t into a decimal string
+ * Without using divide - we don't want
+ * to implement divide unit and we 
+ * don't care about speed.
+ * ----------------------------------- */
+void uint8_to_decimal_str( uint8_t value , char *buffer) {
+
+  const uint8_t magnitude[3] = {1,10,100};
+
+  uint16_t delta;
+  uint16_t trialValue = 0;
+
+  const char ASCII_zero_character = 48;
+
+  buffer[0] = ASCII_zero_character; buffer[1] = ASCII_zero_character; buffer[2] = ASCII_zero_character; buffer[3] = 0;
+
+  //printf("Start, converting %i\n",value);
+  //for ( int i =0; i<4; i++){
+  //  printf("%i , %i\n",i,buffer[i]);
+  //}
+
+  // loop through 100's , 10's and 1's
+  for ( int16_t magnitudeIdx =2; magnitudeIdx > -1; magnitudeIdx-- ){
+
+    delta = magnitude[magnitudeIdx];
+
+    // printf("Delta = %i\n",delta);
+
+    // for each magnitude
+    for ( uint16_t digit = 0; digit < 10 ; digit ++ ){
+
+      // printf("trialValue = %i\n",trialValue);
+
+      if (( value - ( trialValue + delta )) >= 0) {
+
+	  trialValue += delta;
+	  buffer[2-magnitudeIdx] += 1;
+
+	} else {
+	  break; // go to the next order of magnitude.
+	}
+    }
+  }
+
+  //for ( int i =0; i<4; i++){
+  //  printf("%i , %i\n",i,buffer[i]);
+  //}
+  return;
+
+}
+
