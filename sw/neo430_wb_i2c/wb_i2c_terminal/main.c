@@ -36,12 +36,7 @@
 #include "../../lib/neo430/include/neo430_i2c.h"
 #include <stdbool.h>
 
-
-// Global variables
-//uint8_t wb_config = 0;
-
 // Configuration
-#define MAX_CMD_LENGTH 16
 #define BAUD_RATE 19200
 
 /* ------------------------------------------------------------
@@ -49,11 +44,6 @@
  * ------------------------------------------------------------ */
 int main(void) {
 
-  // Global variables
-  //uint8_t wb_config = 1;
-  // wb_config = 1;
-  
-  //uint16_t length = 0;
   uint16_t length = 0;
   uint16_t selection = 0;
   uint16_t uid;
