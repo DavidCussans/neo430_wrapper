@@ -1,8 +1,9 @@
 -- #################################################################################################
 -- #  << NEO430 - General Purpose Parallel IO Unit >>                                              #
 -- # ********************************************************************************************* #
--- #  16-bit parallel input & ouptut unit. Any pin-change triggers the IRQ.                        #
--- #  Configurable IRQ trigger: Rising edge, falling edge, high-active or low-active.              #
+-- # 16-bit parallel input & output unit. Any pin-change (HI->LO or LO->HI) triggers the IRQ.      #
+-- # Pins used for the pin change interrupt are selected using a 16-bit mask.                      #
+-- # The PWM controller can be used to module the GPIO controller's output.                        #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -22,7 +23,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               17.07.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 21.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -35,36 +36,37 @@ use neo430.neo430_package.all;
 entity neo430_gpio is
   port (
     -- host access --
-    clk_i  : in  std_ulogic; -- global clock line
-    rden_i : in  std_ulogic; -- read enable
-    wren_i : in  std_ulogic_vector(01 downto 0); -- write enable
-    addr_i : in  std_ulogic_vector(15 downto 0); -- address
-    data_i : in  std_ulogic_vector(15 downto 0); -- data in
-    data_o : out std_ulogic_vector(15 downto 0); -- data out
+    clk_i      : in  std_ulogic; -- global clock line
+    rden_i     : in  std_ulogic; -- read enable
+    wren_i     : in  std_ulogic; -- write enable
+    addr_i     : in  std_ulogic_vector(15 downto 0); -- address
+    data_i     : in  std_ulogic_vector(15 downto 0); -- data in
+    data_o     : out std_ulogic_vector(15 downto 0); -- data out
     -- parallel io --
-    gpio_o : out std_ulogic_vector(15 downto 0);
-    gpio_i : in  std_ulogic_vector(15 downto 0);
+    gpio_o     : out std_ulogic_vector(15 downto 0);
+    gpio_i     : in  std_ulogic_vector(15 downto 0);
+    -- GPIO PWM --
+    gpio_pwm_i : in  std_ulogic;
     -- interrupt --
-    irq_o  : out std_ulogic
+    irq_o      : out std_ulogic
   );
 end neo430_gpio;
 
 architecture neo430_gpio_rtl of neo430_gpio is
 
   -- IO space: module base address --
-  constant hi_abb_c : natural := index_size(io_size_c)-1; -- high address boundary bit
-  constant lo_abb_c : natural := index_size(gpio_size_c); -- low address boundary bit
+  constant hi_abb_c : natural := index_size_f(io_size_c)-1; -- high address boundary bit
+  constant lo_abb_c : natural := index_size_f(gpio_size_c); -- low address boundary bit
 
   -- access control --
   signal acc_en : std_ulogic; -- module access enable
   signal addr   : std_ulogic_vector(15 downto 0); -- access address
-  signal wr_en  : std_ulogic; -- word write enable
+  signal wren   : std_ulogic; -- word write enable
+  signal rden   : std_ulogic; -- read enable
 
   -- accessible regs --
-  signal irq_en    : std_ulogic;
-  signal trigger   : std_ulogic_vector(01 downto 0);
-  signal dout, din : std_ulogic_vector(15 downto 0);
-  signal irq_mask  : std_ulogic_vector(15 downto 0);
+  signal dout, din : std_ulogic_vector(15 downto 0); -- r/w
+  signal irq_mask  : std_ulogic_vector(15 downto 0); -- -/w
 
   -- misc --
   signal irq_raw, sync_in, in_buf : std_ulogic_vector(15 downto 0);
@@ -75,7 +77,8 @@ begin
   -- -----------------------------------------------------------------------------
   acc_en <= '1' when (addr_i(hi_abb_c downto lo_abb_c) = gpio_base_c(hi_abb_c downto lo_abb_c)) else '0';
   addr   <= gpio_base_c(15 downto lo_abb_c) & addr_i(lo_abb_c-1 downto 1) & '0'; -- word aligned
-  wr_en  <= acc_en and wren_i(1) and wren_i(0);
+  wren   <= acc_en and wren_i;
+  rden   <= acc_en and rden_i;
 
 
   -- Write access -------------------------------------------------------------
@@ -83,53 +86,37 @@ begin
   wr_access: process(clk_i)
   begin
     if rising_edge(clk_i) then
-      if (wr_en = '1') then
-        case addr is
-          when gpio_out_addr_c =>
-            dout <= data_i;
-          when gpio_ctrl_addr_c =>
-            trigger <= data_i(1 downto 0);
-            irq_en  <= data_i(2);
-          when gpio_irqmask_addr_c =>
-            irq_mask <= data_i;
-          when others =>
-            NULL;
-        end case;
+      if (wren = '1') then
+        if (addr = gpio_out_addr_c) then
+          dout <= data_i;
+        end if;
+        if (addr = gpio_irqmask_addr_c) then
+          irq_mask <= data_i;
+        end if;
       end if;
     end if;
   end process wr_access;
 
-  -- output --
-  gpio_o <= dout;
+  -- (PWM modulated) output --
+  gpio_o <= dout when (gpio_pwm_i = '1') else (others => '0');
 
 
   -- IRQ Generator ------------------------------------------------------------
   -- -----------------------------------------------------------------------------
-  irq_trigger: process(trigger, din, sync_in)
-  begin
-    -- trigger type --
-    case trigger is
-      when "00" => -- low level
-        irq_raw <= not din;
-      when "01" => -- high level
-        irq_raw <= din;
-      when "10" => -- falling edge
-        irq_raw <= (not sync_in) and din;
-      when others => -- rising edge
-        irq_raw <= sync_in and (not din);
-    end case;
-  end process irq_trigger;
-
-  -- CPU interrupt request --
-  irq_output_reg: process(clk_i)
+  irq_generator: process(clk_i)
   begin
     if rising_edge(clk_i) then
-      irq_o <= '0';
-      if ((irq_raw and irq_mask) /= x"0000") and (irq_en = '1') then
-        irq_o <= '1';
-      end if;
+      -- input synchronizer --
+      in_buf  <= gpio_i;
+      din     <= in_buf;
+      sync_in <= din;
+      -- IRQ --
+      irq_o <= or_all_f(irq_raw);
     end if;
-  end process irq_output_reg;
+  end process irq_generator;
+
+  -- any transition triggers an interrupt (if enabled for according input pin) --
+  irq_raw <= (din xor sync_in) and irq_mask;
 
 
   -- Read access --------------------------------------------------------------
@@ -137,13 +124,9 @@ begin
   rd_access: process(clk_i)
   begin
     if rising_edge(clk_i) then
-      -- input synchronizer --
-      in_buf  <= gpio_i;
-      sync_in <= in_buf;
-      din     <= sync_in;
       -- read access --
       data_o <= (others => '0');
-      if (rden_i = '1') and (acc_en = '1') then
+      if (rden = '1') then
         if (addr = gpio_in_addr_c) then
           data_o <= din;
         else -- gpio_out_addr_c

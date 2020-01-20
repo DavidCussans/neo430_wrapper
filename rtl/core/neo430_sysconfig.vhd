@@ -1,8 +1,8 @@
 -- #################################################################################################
 -- #  << NEO430 - System Configuration Memory >>                                                   #
 -- # ********************************************************************************************* #
--- #  - Lower 8 word addresses*: ROM for HW info ( 8 entries)                                      #
--- #  - Upper 8 word addresses* (2 x mirrored): RAM for the 4 interrupt vector addresses           #
+-- # This is a read only memory providing information about the processor configuration obtained   #
+-- # from the top entity's generics.                                                               #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -22,7 +22,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               01.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 28.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -41,13 +41,19 @@ entity neo430_sysconfig is
     -- additional configuration --
     USER_CODE   : std_ulogic_vector(15 downto 0) := x"0000"; -- custom user code
     -- module configuration --
-    DADD_USE    : boolean := true; -- implement DADD instruction?
-    MULDIV_USE  : boolean := true; -- implementcustom MULDIV unit?
+    MULDIV_USE  : boolean := true; -- implement multiplier/divider unit?
     WB32_USE    : boolean := true; -- implement WB32 unit?
     WDT_USE     : boolean := true; -- implement WDT?
     GPIO_USE    : boolean := true; -- implement GPIO unit?
     TIMER_USE   : boolean := true; -- implement timer?
-    USART_USE   : boolean := true; -- implement USART?
+    UART_USE    : boolean := true; -- implement UART?
+    CRC_USE     : boolean := true; -- implement CRC unit?
+    CFU_USE     : boolean := true; -- implement CF unit?
+    PWM_USE     : boolean := true; -- implement PWM controller?
+    TWI_USE     : boolean := true; -- implement TWI?
+    SPI_USE     : boolean := true; -- implement SPI?
+    TRNG_USE    : boolean := true; -- implement TRNG?
+    EXIRQ_USE   : boolean := true; -- implement EXIRQ? (default=true)
     -- boot configuration --
     BOOTLD_USE  : boolean := true; -- implement and use bootloader?
     IMEM_AS_ROM : boolean := false -- implement IMEM as read-only memory?
@@ -55,7 +61,7 @@ entity neo430_sysconfig is
   port (
     clk_i  : in  std_ulogic; -- global clock line
     rden_i : in  std_ulogic; -- read enable
-    wren_i : in  std_ulogic_vector(01 downto 0); -- write enable
+    wren_i : in  std_ulogic; -- write enable
     addr_i : in  std_ulogic_vector(15 downto 0); -- address
     data_i : in  std_ulogic_vector(15 downto 0); -- data in
     data_o : out std_ulogic_vector(15 downto 0)  -- data out
@@ -65,14 +71,14 @@ end neo430_sysconfig;
 architecture neo430_sysconfig_rtl of neo430_sysconfig is
 
   -- IO space: module base address --
-  constant hi_abb_c : natural := index_size(io_size_c)-1; -- high address boundary bit
-  constant lo_abb_c : natural := index_size(sysconfig_size_c); -- low address boundary bit
+  constant hi_abb_c : natural := index_size_f(io_size_c)-1; -- high address boundary bit
+  constant lo_abb_c : natural := index_size_f(sysconfig_size_c); -- low address boundary bit
 
   -- access control --
   signal acc_en    : std_ulogic; -- access enable
   signal addr      : std_ulogic_vector(15 downto 0);
+  signal rden      : std_ulogic;
   signal info_addr : std_ulogic_vector(02 downto 0);
-  signal irqv_addr : std_ulogic_vector(01 downto 0);
 
   -- misc --
   signal f_clk : std_ulogic_vector(31 downto 0);
@@ -81,37 +87,39 @@ architecture neo430_sysconfig_rtl of neo430_sysconfig is
   type info_mem_t is array (0 to 7) of std_ulogic_vector(15 downto 0);
   signal sysinfo_mem : info_mem_t; -- ROM
 
-  -- interrupt vector RAM --
-  type irqv_mem_t is array (0 to 3) of std_ulogic_vector(15 downto 0);
-  signal irqvec_mem : irqv_mem_t; -- RAM
-
 begin
 
   -- Access Control -----------------------------------------------------------
   -- -----------------------------------------------------------------------------
   acc_en <= '1' when (addr_i(hi_abb_c downto lo_abb_c) = sysconfig_base_c(hi_abb_c downto lo_abb_c)) else '0';
   addr   <= sysconfig_base_c(15 downto lo_abb_c) & addr_i(lo_abb_c-1 downto 1) & '0'; -- word aligned
+  rden   <= acc_en and rden_i;
 
-  info_addr <= addr(index_size(sysconfig_size_c/2)-1 downto 1);
-  irqv_addr <= addr(index_size(sysconfig_size_c/4)-1 downto 1);
+  info_addr <= addr(index_size_f(sysconfig_size_c)-1 downto 1);
   
 
-  -- Construct Info Mem -------------------------------------------------------
+  -- Construct Info ROM -------------------------------------------------------
   -- -----------------------------------------------------------------------------
   -- CPUID0: HW version --
   sysinfo_mem(0) <= hw_version_c; -- HW version
 
   -- CPUID1: System setup (features) --
-  sysinfo_mem(1)(00) <= bool_to_ulogic(MULDIV_USE);  -- MULDIV present?
-  sysinfo_mem(1)(01) <= bool_to_ulogic(WB32_USE);    -- WB32 present?
-  sysinfo_mem(1)(02) <= bool_to_ulogic(WDT_USE);     -- WDT present?
-  sysinfo_mem(1)(03) <= bool_to_ulogic(GPIO_USE);    -- GPIO present?
-  sysinfo_mem(1)(04) <= bool_to_ulogic(TIMER_USE);   -- TIMER present?
-  sysinfo_mem(1)(05) <= bool_to_ulogic(USART_USE);   -- USART present?
-  sysinfo_mem(1)(06) <= bool_to_ulogic(DADD_USE);    -- DADD instruction present?
-  sysinfo_mem(1)(07) <= bool_to_ulogic(BOOTLD_USE);  -- bootloader present?
-  sysinfo_mem(1)(08) <= bool_to_ulogic(IMEM_AS_ROM); -- IMEM implemented as true ROM?
-  sysinfo_mem(1)(15 downto 9) <= (others => '0');    -- reserved
+  sysinfo_mem(1)(00) <= bool_to_ulogic_f(MULDIV_USE);     -- MULDIV present?
+  sysinfo_mem(1)(01) <= bool_to_ulogic_f(WB32_USE);       -- WB32 present?
+  sysinfo_mem(1)(02) <= bool_to_ulogic_f(WDT_USE);        -- WDT present?
+  sysinfo_mem(1)(03) <= bool_to_ulogic_f(GPIO_USE);       -- GPIO present?
+  sysinfo_mem(1)(04) <= bool_to_ulogic_f(TIMER_USE);      -- TIMER present?
+  sysinfo_mem(1)(05) <= bool_to_ulogic_f(UART_USE);       -- UART present?
+  sysinfo_mem(1)(06) <= bool_to_ulogic_f(use_dadd_cmd_c); -- DADD instruction present?
+  sysinfo_mem(1)(07) <= bool_to_ulogic_f(BOOTLD_USE);     -- bootloader present?
+  sysinfo_mem(1)(08) <= bool_to_ulogic_f(IMEM_AS_ROM);    -- IMEM implemented as true ROM?
+  sysinfo_mem(1)(09) <= bool_to_ulogic_f(CRC_USE);        -- CRC present?
+  sysinfo_mem(1)(10) <= bool_to_ulogic_f(CFU_USE);        -- CFU present?
+  sysinfo_mem(1)(11) <= bool_to_ulogic_f(PWM_USE);        -- PWM present?
+  sysinfo_mem(1)(12) <= bool_to_ulogic_f(TWI_USE);        -- TWI present?
+  sysinfo_mem(1)(13) <= bool_to_ulogic_f(SPI_USE);        -- SPI present?
+  sysinfo_mem(1)(14) <= bool_to_ulogic_f(TRNG_USE);       -- TRNG present?
+  sysinfo_mem(1)(15) <= bool_to_ulogic_f(EXIRQ_USE);      -- EXIRQ present?
 
   -- CPUID2: User code --
   sysinfo_mem(2) <= USER_CODE;
@@ -119,8 +127,8 @@ begin
   -- CPUID3: IMEM (ROM/RAM) size --
   sysinfo_mem(3) <= std_ulogic_vector(to_unsigned(IMEM_SIZE, 16)); -- size in bytes
 
-  -- CPUID4: DMEM (RAM) base address --
-  sysinfo_mem(4) <= dmem_base_c;
+  -- CPUID4: reserved --
+  sysinfo_mem(4) <= (others => '0');
 
   -- CPUID5: DMEM (RAM) size --
   sysinfo_mem(5) <= std_ulogic_vector(to_unsigned(DMEM_SIZE, 16)); -- size in bytes
@@ -131,27 +139,18 @@ begin
   sysinfo_mem(7) <= f_clk(31 downto 16); -- clock speed HI
 
 
-  -- Read/Write Access --------------------------------------------------------
+  -- Read Access --------------------------------------------------------------
   -- -----------------------------------------------------------------------------
-  rw_access: process(clk_i)
+  read_access: process(clk_i)
   begin
     if rising_edge(clk_i) then
-      -- write access (IRQ vectors) --
-      if (wren_i = "11") and (acc_en = '1') and (addr_i(lo_abb_c-1) = '1') then
-        irqvec_mem(to_integer(unsigned(irqv_addr))) <= data_i;
-      end if;
-      -- read access --
-      if ((rden_i and acc_en) = '1') then
-        if (addr_i(lo_abb_c-1) = '0') then -- read INFOMEM
-          data_o <= sysinfo_mem(to_integer(unsigned(info_addr)));
-        else -- read IRQ vector
-          data_o <= irqvec_mem(to_integer(unsigned(irqv_addr)));
-        end if;
+      if (rden = '1') then
+        data_o <= sysinfo_mem(to_integer(unsigned(info_addr)));
       else
-        data_o <= x"0000";
+        data_o <= (others => '0');
       end if;
     end if;
-  end process rw_access;
+  end process read_access;
 
 
 end neo430_sysconfig_rtl;

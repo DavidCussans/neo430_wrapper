@@ -23,13 +23,13 @@
 // # You should have received a copy of the GNU Lesser General Public License along with this      #
 // # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 // # ********************************************************************************************* #
-// #  Stephan Nolting, Hannover, Germany                                               06.10.2017  #
+// # Stephan Nolting, Hannover, Germany                                                17.11.2018 #
 // #################################################################################################
 
 
 // Libraries
 #include <stdint.h>
-#include "../../lib/neo430/neo430.h"
+#include <neo430.h>
 
 // Configuration
 #define BAUD_RATE 19200
@@ -40,17 +40,16 @@
 int main(void) {
 
   // setup UART
-  uart_set_baud(BAUD_RATE);
-  USI_CT = (1<<USI_CT_EN);
+  neo430_uart_setup(BAUD_RATE);
 
   // intro text
-  _printf("\n\nGenerating prime numbers between 3 and %n", 0xFFFFFFFF);
-  _printf(".\n"
-          "Press any key to start.\n"
-          "You can abort the program by pressing any key again.\n");
+  neo430_printf("\n\nGenerating prime numbers between 3 and %n", 0xFFFFFFFF);
+  neo430_printf(".\n"
+                 "Press any key to start.\n"
+                 "You can abort the program by pressing any key again.\n");
 
   // wait for any key
-  while(!uart_char_received());
+  while(!neo430_uart_char_received());
 
   uint32_t n = 0, i = 0;
   uint8_t is_prime = 0;
@@ -69,11 +68,11 @@ int main(void) {
 
     // output prime number in decimal representation
     if (is_prime)
-      _printf("%n, ", n);
+      neo430_printf("%n, ", n);
 
     // abort?
-    if (uart_char_received()) // any key input?
-      soft_reset();
+    if (neo430_uart_char_received()) // any key input?
+      neo430_soft_reset();
   }
 
   return 0;

@@ -22,7 +22,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hanover, Germany                                                01.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 28.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -60,6 +60,7 @@ architecture neo430_tb_rtl of neo430_tb is
 
   -- generators --
   signal clk_gen, rst_gen : std_ulogic := '0';
+  signal irq, irq_ack     : std_ulogic_vector(7 downto 0);
 
   -- local signals --
   signal uart_txd : std_ulogic;
@@ -71,6 +72,10 @@ architecture neo430_tb_rtl of neo430_tb is
   signal uart_rx_sreg     : std_ulogic_vector(08 downto 0) := (others => '0');
   signal uart_rx_baud_cnt : real;
   signal uart_rx_bitcnt   : natural;
+
+  -- twi --
+  signal twi_sda : std_logic;
+  signal twi_scl : std_logic;
 
 begin
 
@@ -86,18 +91,24 @@ begin
   generic map (
     -- general configuration --
     CLOCK_SPEED => f_clk_c,           -- main clock in Hz
-    IMEM_SIZE   => 4*1024,            -- internal IMEM size in bytes, max 32kB (default=4kB)
-    DMEM_SIZE   => 2*1024,            -- internal DMEM size in bytes, max 28kB (default=2kB)
+    IMEM_SIZE   => 4*1024,            -- internal IMEM size in bytes, max 48kB (default=4kB)
+    DMEM_SIZE   => 2*1024,            -- internal DMEM size in bytes, max 12kB (default=2kB)
     -- additional configuration --
     USER_CODE   => x"4788",           -- custom user code
     -- module configuration --
-    DADD_USE    => true,              -- implement DADD instruction? (default=true)
     MULDIV_USE  => true,              -- implement multiplier/divider unit? (default=true)
     WB32_USE    => true,              -- implement WB32 unit? (default=true)
     WDT_USE     => true,              -- implement WBT? (default=true)
     GPIO_USE    => true,              -- implement GPIO unit? (default=true)
     TIMER_USE   => true,              -- implement timer? (default=true)
-    USART_USE   => true,              -- implement USART? (default=true)
+    UART_USE    => true,              -- implement UART? (default=true)
+    CRC_USE     => true,              -- implement CRC unit? (default=true)
+    CFU_USE     => true,              -- implement custom functions unit? (default=false)
+    PWM_USE     => true,              -- implement PWM controller? (default=true)
+    TWI_USE     => true,              -- implement two wire serial interface? (default=true)
+    SPI_USE     => true,              -- implement SPI? (default=true)
+    TRNG_USE    => false,             -- implement TRNG? (default=false) - CANNOT BE SIMULATED!
+    EXIRQ_USE   => true,              -- implement EXIRQ? (default=true)
     -- boot configuration --
     BOOTLD_USE  => false,             -- implement and use bootloader? (default=true)
     IMEM_AS_ROM => false              -- implement IMEM as read-only memory? (default=false)
@@ -107,8 +118,10 @@ begin
     clk_i      => clk_gen,            -- global clock, rising edge
     rst_i      => rst_gen,            -- global reset, async, low-active
     -- gpio --
-    gpio_o      => open,               -- parallel output
-    gpio_i      => x"0000",            -- parallel input
+    gpio_o      => open,              -- parallel output
+    gpio_i      => x"0000",           -- parallel input
+    -- pwm channels --
+    pwm_o       => open,              -- pwm channels
     -- serial com --
     uart_txd_o => uart_txd,           -- UART send data
     uart_rxd_i => '0',                -- UART receive data
@@ -116,6 +129,8 @@ begin
     spi_mosi_o => spi_data,           -- serial data line out
     spi_miso_i => spi_data,           -- serial data line in
     spi_cs_o   => open,               -- SPI CS 0..5
+    twi_sda_io => twi_sda,            -- twi serial data line
+    twi_scl_io => twi_scl,            -- twi serial clock line
     -- 32-bit wishbone interface --
     wb_adr_o   => open,               -- address
     wb_dat_i   => x"00000000",        -- read data
@@ -125,13 +140,30 @@ begin
     wb_stb_o   => open,               -- strobe
     wb_cyc_o   => open,               -- valid cycle
     wb_ack_i   => '0',                -- transfer acknowledge
-    -- external interrupt --
-    irq_i      => '0',                -- external interrupt request line
-    irq_ack_o  => open                -- external interrupt request acknowledge
+    -- external interrupts --
+    ext_irq_i  => irq,                -- external interrupt request lines
+    ext_ack_o  => irq_ack             -- external interrupt request acknowledges
   );
 
+  -- twi pull-ups --
+  twi_sda <= 'H';
+  twi_scl <= 'H';
 
-  -- Dummy UART Receiver ------------------------------------------------------
+
+  -- Interrupt Generator ------------------------------------------------------
+  -- -----------------------------------------------------------------------------
+  interrupt_gen: process
+  begin
+    irq <= (others => '0');
+    wait for 20 ms;
+    wait until rising_edge(clk_gen);
+    irq <= "00000111";
+    wait for t_clock_c;
+    wait;
+  end process interrupt_gen;
+
+
+  -- Console UART Receiver ----------------------------------------------------
   -- -----------------------------------------------------------------------------
   uart_rx_unit: process(clk_gen)
     variable i, j     : integer;

@@ -23,7 +23,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               01.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 28.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -51,6 +51,8 @@ architecture neo430_test_rtl of neo430_test is
   -- local signals --
   signal gpio_out : std_ulogic_vector(15 downto 0);
   signal rst_int  : std_ulogic;
+  signal twi_sda  : std_logic;
+  signal twi_scl  : std_logic;
 
 begin
 
@@ -60,18 +62,24 @@ begin
   generic map (
     -- general configuration --
     CLOCK_SPEED => 100000000,         -- main clock in Hz
-    IMEM_SIZE   => 4*1024,            -- internal IMEM size in bytes, max 32kB (default=4kB)
-    DMEM_SIZE   => 2*1024,            -- internal DMEM size in bytes, max 28kB (default=2kB)
+    IMEM_SIZE   => 4*1024,            -- internal IMEM size in bytes, max 48kB (default=4kB)
+    DMEM_SIZE   => 2*1024,            -- internal DMEM size in bytes, max 12kB (default=2kB)
     -- additional configuration --
     USER_CODE   => x"CAFE",           -- custom user code
     -- module configuration --
-    DADD_USE    => true,              -- implement DADD instruction? (default=true)
     MULDIV_USE  => true,              -- implement multiplier/divider unit? (default=true)
     WB32_USE    => true,              -- implement WB32 unit? (default=true)
     WDT_USE     => true,              -- implement WDT? (default=true)
     GPIO_USE    => true,              -- implement GPIO unit? (default=true)
     TIMER_USE   => true,              -- implement timer? (default=true)
-    USART_USE   => true,              -- implement USART? (default=true)
+    UART_USE    => true,              -- implement UART? (default=true)
+    CRC_USE     => true,              -- implement CRC unit? (default=true)
+    CFU_USE     => false,             -- implement custom functions unit? (default=false)
+    PWM_USE     => true,              -- implement PWM controller? (default=true)
+    TWI_USE     => true,              -- implement two wire serial interface? (default=true)
+    SPI_USE     => true,              -- implement SPI? (default=true)
+    TRNG_USE    => false,             -- implement TRNG? (default=false)
+    EXIRQ_USE   => true,              -- implement EXIRQ? (default=true)
     -- boot configuration --
     BOOTLD_USE  => true,              -- implement and use bootloader? (default=true)
     IMEM_AS_ROM => false              -- implement IMEM as read-only memory? (default=false)
@@ -83,13 +91,17 @@ begin
     -- gpio --
     gpio_o     => gpio_out,           -- parallel output
     gpio_i     => x"0000",            -- parallel input
+    -- pwm channels --
+    pwm_o      => open,               -- pwm channels
     -- serial com --
     uart_txd_o => uart_txd_o,         -- UART send data
     uart_rxd_i => uart_rxd_i,         -- UART receive data
     spi_sclk_o => open,               -- serial clock line
     spi_mosi_o => open,               -- serial data line out
     spi_miso_i => '0',                -- serial data line in
-    spi_cs_o   => open,               -- SPI CS 0..5
+    spi_cs_o   => open,               -- SPI CS 0..7
+    twi_sda_io => twi_sda,            -- twi serial data line
+    twi_scl_io => twi_scl,            -- twi serial clock line
     -- 32-bit wishbone interface --
     wb_adr_o   => open,               -- address
     wb_dat_i   => x"00000000",        -- read data
@@ -99,9 +111,9 @@ begin
     wb_stb_o   => open,               -- strobe
     wb_cyc_o   => open,               -- valid cycle
     wb_ack_i   => '0',                -- transfer acknowledge
-    -- external interrupt --
-    irq_i      => '0',                -- external interrupt request line
-    irq_ack_o  => open                -- external interrupt request acknowledge
+    -- external interrupts --
+    ext_irq_i  => "00000000",         -- external interrupt request lines
+    ext_ack_o  => open                -- external interrupt request acknowledges
   );
 
   -- constrain output signals --
@@ -109,6 +121,10 @@ begin
 
   -- internal reset (must be low-active!) --
   rst_int <= rst_i; -- invert me?!
+
+  -- twi --
+  twi_sda <= 'H';
+  twi_scl <= 'H';
 
 
 end neo430_test_rtl;

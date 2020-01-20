@@ -25,7 +25,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- # Stephan Nolting, Hannover, Germany                                                 22.02.1017 #
+-- # Stephan Nolting, Hannover, Germany                                                 27.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -41,7 +41,7 @@ entity neo430_wdt is
     clk_i       : in  std_ulogic; -- global clock line
     rst_i       : in  std_ulogic; -- external reset, low-active, use as async
     rden_i      : in  std_ulogic; -- read enable
-    wren_i      : in  std_ulogic_vector(01 downto 0); -- write enable
+    wren_i      : in  std_ulogic; -- write enable
     addr_i      : in  std_ulogic_vector(15 downto 0); -- address
     data_i      : in  std_ulogic_vector(15 downto 0); -- data in
     data_o      : out std_ulogic_vector(15 downto 0); -- data out
@@ -56,8 +56,8 @@ end neo430_wdt;
 architecture neo430_wdt_rtl of neo430_wdt is
 
   -- IO space: module base address --
-  constant hi_abb_c : natural := index_size(io_size_c)-1; -- high address boundary bit
-  constant lo_abb_c : natural := index_size(wdt_size_c); -- low address boundary bit
+  constant hi_abb_c : natural := index_size_f(io_size_c)-1; -- high address boundary bit
+  constant lo_abb_c : natural := index_size_f(wdt_size_c); -- low address boundary bit
 
   -- Watchdog access password - do not change! --
   constant wdt_password_c : std_ulogic_vector(07 downto 0) := x"47";
@@ -68,6 +68,7 @@ architecture neo430_wdt_rtl of neo430_wdt is
   constant ctrl_clksel2_c : natural := 2; -- r/w: prescaler select bit 2
   constant ctrl_enable_c  : natural := 3; -- r/w: WDT enable
   constant ctrl_rcause_c  : natural := 4; -- r/-: reset cause (0: external, 1: watchdog timeout)
+  constant ctrl_rpwfail_c : natural := 5; -- r/-: watchdog reset caused by wrong password access when '1'
 
   -- access control --
   signal acc_en        : std_ulogic; -- module access enable
@@ -76,9 +77,10 @@ architecture neo430_wdt_rtl of neo430_wdt is
   signal wren          : std_ulogic;
 
   -- accessible regs --
-  signal source  : std_ulogic; -- source of the system reset: '0' = external, '1' = watchdog timeout
-  signal enable  : std_ulogic;
-  signal clk_sel : std_ulogic_vector(02 downto 0);
+  signal rst_source : std_ulogic; -- source of the system reset: '0' = external, '1' = watchdog timeout
+  signal pw_fail    : std_ulogic; -- watchdog reset caused by wrong password access
+  signal enable     : std_ulogic;
+  signal clk_sel    : std_ulogic_vector(02 downto 0);
 
   -- reset counter --
   signal cnt      : std_ulogic_vector(16 downto 0);
@@ -86,7 +88,7 @@ architecture neo430_wdt_rtl of neo430_wdt is
   signal rst_sync : std_ulogic_vector(01 downto 0);
 
   -- prescaler clock generator --
-  signal prsc_tick, prsc_sel, prsc_sel_ff : std_ulogic;
+  signal prsc_tick : std_ulogic;
 
 begin
 
@@ -94,8 +96,8 @@ begin
   -- -----------------------------------------------------------------------------
   acc_en <= '1' when (addr_i(hi_abb_c downto lo_abb_c) = wdt_base_c(hi_abb_c downto lo_abb_c)) else '0';
   pwd_ok <= '1' when (data_i(15 downto 8) = wdt_password_c) else '0'; -- password check
-  wren   <= '1' when ((acc_en = '1') and (wren_i = "11") and (pwd_ok = '1')) else '0'; -- access ok
-  fail   <= '1' when ((acc_en = '1') and (wren_i = "11") and (pwd_ok = '0')) else '0'; -- access fail!
+  wren   <= '1' when ((acc_en = '1') and (wren_i = '1') and (pwd_ok = '1')) else '0'; -- write access ok
+  fail   <= '1' when ((acc_en = '1') and (wren_i = '1') and (pwd_ok = '0')) else '0'; -- write access fail!
 
 
   -- Write Access, Reset Generator --------------------------------------------
@@ -104,9 +106,10 @@ begin
   begin
     if (rst_i = '0') or (rst_sync(1) = '0') then -- external or internal reset
       enable  <= '0'; -- disable WDT
-      clk_sel <= (others => '1'); -- slowest clock source
+      clk_sel <= (others => '1'); -- slowest clock rst_source
       rst_gen <= (others => '1'); -- do NOT fire on reset!
     elsif rising_edge(clk_i) then
+      -- control register write access --
       if (wren = '1') then -- allow write if password is correct
         enable  <= data_i(ctrl_enable_c);
         clk_sel <= data_i(ctrl_clksel2_c downto ctrl_clksel0_c);
@@ -130,8 +133,6 @@ begin
       fail_ff <= fail;
       -- reset synchronizer --
       rst_sync <= rst_sync(0) & rst_gen(rst_gen'left);
-      -- tick generator --
-      prsc_sel_ff <= prsc_sel;
       -- counter update --
       if (wren = '1') then -- clear counter on write access (manual watchdog reset)
         cnt <= (others => '0');
@@ -141,10 +142,9 @@ begin
     end if;
   end process cnt_sync;
 
-  -- counter clock select / edge detection --
+  -- counter clock select --
   clkgen_en_o <= enable;
-  prsc_sel    <= clkgen_i(to_integer(unsigned(clk_sel)));
-  prsc_tick   <= prsc_sel_ff and (not prsc_sel); -- edge detector
+  prsc_tick   <= clkgen_i(to_integer(unsigned(clk_sel)));
 
   -- system reset --
   rst_o <= rst_sync(1);
@@ -155,9 +155,12 @@ begin
   rst_cause: process(rst_i, clk_i)
   begin
     if (rst_i = '0') then
-      source <= '0';
+      rst_source <= '0';
+      pw_fail    <= '0';
     elsif rising_edge(clk_i) then
-      source <= source or (not rst_sync(1));
+      rst_source <= rst_source or (cnt(cnt'left) and enable) or (fail_ff and enable); -- set on WDT timeout or access error
+      pw_fail    <= (pw_fail or (fail_ff and enable)) and (not (cnt(cnt'left) and enable)); -- set on failed access, clear on WDT timeout
+    --pw_fail    <= (pw_fail and (not (cnt(cnt'left) and enable))) or (fail_ff and enable); -- clear on WDT timeout, set on failed access
     end if;
   end process rst_cause;
 
@@ -170,8 +173,9 @@ begin
       data_o <= (others => '0');
       if (acc_en = '1') and (rden_i = '1') then
         data_o(ctrl_clksel2_c downto ctrl_clksel0_c) <= clk_sel;
-        data_o(ctrl_enable_c) <= enable;
-        data_o(ctrl_rcause_c) <= source;
+        data_o(ctrl_enable_c)  <= enable;
+        data_o(ctrl_rcause_c)  <= rst_source;
+        data_o(ctrl_rpwfail_c) <= pw_fail;
       end if;
     end if;
   end process read_access;

@@ -1,8 +1,8 @@
 // #################################################################################################
 // #  < Wishbone bus explorer >                                                                    #
 // # ********************************************************************************************* #
-// # Manual access to the registers of modules, which are connected to Wishbone bus. This is also  #
-// # a neat example to illustrate the construction of a console-like user interface.               #
+// # Manual access to the registers of modules, which are connected to the Wishbone bus. This tool #
+// # uses NONBLOCKING Wishbone transactions.                                                       #
 // # ********************************************************************************************* #
 // # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 // # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -22,14 +22,14 @@
 // # You should have received a copy of the GNU Lesser General Public License along with this      #
 // # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 // # ********************************************************************************************* #
-// #  Stephan Nolting, Hannover, Germany                                               06.10.2017  #
+// # Stephan Nolting, Hannover, Germany                                                 10.10.2019 #
 // #################################################################################################
 
 
 // Libraries
 #include <stdint.h>
 #include <string.h>
-#include "../../lib/neo430/neo430.h"
+#include <neo430.h>
 
 // Global variables
 uint8_t wb_config = 0;
@@ -39,7 +39,6 @@ void setup_wb(void);
 void read_wb_address(void);
 void write_wb_address(void);
 void dump_wb(void);
-uint32_t hex_str_to_uint32(char *buffer);
 
 // Configuration
 #define MAX_CMD_LENGTH 16
@@ -52,39 +51,36 @@ uint32_t hex_str_to_uint32(char *buffer);
 int main(void) {
 
   // setup UART
-  uart_set_baud(BAUD_RATE);
-  USI_CT = (1<<USI_CT_EN);
+  neo430_uart_setup(BAUD_RATE);
 
   char buffer[MAX_CMD_LENGTH];
   uint16_t length = 0;
   uint16_t selection = 0;
 
-  uart_br_print("\n--------------------------------------\n"
+  neo430_uart_br_print("\n--------------------------------------\n"
                   "--- Wishbone Bus Explorer Terminal ---\n"
                   "--------------------------------------\n\n");
 
   // check if WB unit was synthesized, exit if no WB is available
   if (!(SYS_FEATURES & (1<<SYS_WB32_EN))) {
-    uart_br_print("Error! No Wishbone adapter synthesized!");
+    neo430_uart_br_print("Error! No Wishbone adapter synthesized!");
     return 1;
   }
 
   // default config
-  wb_config = 1;
+  wb_config = 4;
+  neo430_wishbone_terminate(); // terminate current transfer
 
-  uart_br_print("Configure the actual data transfer size (1, 2 or 4 bytes)\n"
-                "using 'setup'. Addresses are always 32-bit wide.\n"
-                "Type 'help' to see the help menu.\n\n"
-
-                "Note: Do not access unused addreses! This program uses\n"
-                "blocking accesses, so performing transactions to unimplemented\n"
-                "addresses will permanently stall the program!\n");
+  neo430_uart_br_print("Configure the actual data transfer size (1, 2 or 4 bytes)\n"
+                       "using 'setup'. Addresses are always 32-bit wide.\n"
+                       "This tool uses non-blocking Wishbone transactions.\n\n"
+                       "Type 'help' to see the help menu.\n\n");
 
   // Main menu
   for (;;) {
-    uart_br_print("WB_EXPLORER:> ");
-    length = uart_scan(buffer, MAX_CMD_LENGTH);
-    uart_br_print("\n");
+    neo430_uart_br_print("WB_EXPLORER:> ");
+    length = neo430_uart_scan(buffer, MAX_CMD_LENGTH, 1);
+    neo430_uart_br_print("\n");
 
     if (!length) // nothing to be done
      continue;
@@ -110,14 +106,14 @@ int main(void) {
     switch(selection) {
 
       case 1: // print help menu
-        uart_br_print("Available commands:\n"
-                      " help  - show this text\n"
-                      " setup - configure WB interface\n"
-                      " read  - read from WB address\n"
-                      " write - write to WB address\n"
-                      " dump  - dump data from WB addresses\n"
-                      " reset - perform soft-reset\n"
-                      " exit  - exit program and return to bootloader\n");
+        neo430_uart_br_print("Available commands:\n"
+                             " help  - show this text\n"
+                             " setup - configure WB interface\n"
+                             " read  - read from WB address\n"
+                             " write - write to WB address\n"
+                             " dump  - dump data from WB addresses\n"
+                             " reset - perform soft-reset\n"
+                             " exit  - exit program and return to bootloader\n");
         break;
 
       case 2: // setup Wishbone adapter
@@ -137,19 +133,19 @@ int main(void) {
         break;
 
       case 6: // restart
-        while ((USI_CT & (1<<USI_CT_UARTTXBSY)) != 0); // wait for current UART transmission
-        soft_reset();
+        while ((UART_CT & (1<<UART_CT_TX_BUSY)) != 0); // wait for current UART transmission
+        neo430_soft_reset();
         break;
 
       case 7: // goto bootloader
         if (!(SYS_FEATURES & (1<<SYS_BTLD_EN)))
-          uart_br_print("No bootloader installed!\n");
+          neo430_uart_br_print("No bootloader installed!\n");
         else
           asm volatile ("mov #0xF000, r0");
         break;
 
       default: // invalid command
-        uart_br_print("Invalid command. Type 'help' to see all commands.\n");
+        neo430_uart_br_print("Invalid command. Type 'help' to see all commands.\n");
         break;
     }
   }
@@ -165,8 +161,8 @@ void setup_wb(void) {
 
   char buffer[2];
 
-  uart_br_print("Select transfer size in bytes (1,2,4): ");
-  uart_scan(buffer, 2);
+  neo430_uart_br_print("Select transfer size in bytes (1,2,4): ");
+  neo430_uart_scan(buffer, 2, 1);
 
   // process input
   if (!strcmp(buffer, "1"))
@@ -176,11 +172,11 @@ void setup_wb(void) {
   else if (!strcmp(buffer, "4"))
     wb_config = 4;
   else {
-    uart_br_print("\nInvalid input. Cancelling setup.\n");
+    neo430_uart_br_print("\nInvalid input. Cancelling setup.\n");
     return;
   }
 
-  uart_br_print("\nSetup done.\n");
+  neo430_uart_br_print("\nSetup done.\n");
 }
 
 
@@ -191,35 +187,46 @@ void read_wb_address(void) {
 
   char buffer[9];
 
-  uart_br_print("Enter hexadecimal target address: 0x");
-  uart_scan(buffer, 9); // 8 hex chars for address plus '\0'
-  uint32_t address = hex_str_to_uint32(buffer);
+  neo430_uart_br_print("Enter hexadecimal target address: 0x");
+  neo430_uart_scan(buffer, 9, 1); // 8 hex chars for address plus '\0'
+  uint32_t address = neo430_hexstr_to_uint(buffer, strlen(buffer));
 
-  uart_br_print("\nReading from [0x");
-  uart_print_hex_dword(address);
-  uart_br_print("]... ");
-
-  uint8_t r_data8 = 0;
-  uint16_t r_data16 = 0;
-  uint32_t r_data32 = 0;
-
-  // perform access
-  if (wb_config == 1)
-    r_data8 = wishbone_read8(address);
-  if (wb_config == 2)
-    r_data16 = wishbone_read16(address);
-  if (wb_config == 4)
-    r_data32 = wishbone_read32(address);
+  neo430_uart_br_print("\nReading from [0x");
+  neo430_uart_print_hex_dword(address);
+  neo430_uart_br_print("]... ");
 
   // print result
-  uart_br_print("Read data: 0x");
+  neo430_uart_br_print("Read data: 0x");
+
   if (wb_config == 1)
-    uart_print_hex_byte(r_data8);
-  if (wb_config == 2)
-    uart_print_hex_word(r_data16);
-  if (wb_config == 4)
-    uart_print_hex_dword(r_data32);
-  uart_br_print("\n");
+    neo430_wishbone32_read8_start(address);
+  else if (wb_config == 2)
+    neo430_wishbone32_read16_start(address);
+  else if (wb_config == 4)
+    neo430_wishbone32_read32_start(address);
+
+  // wait for transfer to finish
+  uint16_t timeout = 0;
+  while(1){
+    if (!neo430_wishbone_busy())
+      break;
+    if (timeout++ == 100) {
+      neo430_uart_br_print("\nError! Device not responding! Press key to proceed.\n");
+      neo430_wishbone_terminate(); // terminate current transfer
+      while(!neo430_uart_char_received());
+      return;
+    }
+  }
+
+  // read data
+  if (wb_config == 1)
+    neo430_uart_print_hex_byte(neo430_wishbone32_get_data8(address));
+  else if (wb_config == 2)
+    neo430_uart_print_hex_word(neo430_wishbone32_get_data16(address));
+  else if (wb_config == 4)
+    neo430_uart_print_hex_dword(neo430_wishbone32_get_data32());
+
+  neo430_uart_br_print("\n");
 }
 
 
@@ -230,33 +237,42 @@ void write_wb_address(void) {
 
   char buffer[9];
 
-  uart_br_print("Enter hexadecimal target address: 0x");
-  uart_scan(buffer, 9); // 8 hex chars for address plus '\0'
-  uint32_t address = hex_str_to_uint32(buffer);
+  neo430_uart_br_print("Enter hexadecimal target address: 0x");
+  neo430_uart_scan(buffer, 9, 1); // 8 hex chars for address plus '\0'
+  uint32_t address = neo430_hexstr_to_uint(buffer, strlen(buffer));
 
-  uart_br_print("\nEnter hexadecimal write data: 0x");
-  uart_scan(buffer, wb_config*2+1); // get right number of hex chars for data plus '\0'
-  uint32_t data = hex_str_to_uint32(buffer);
+  neo430_uart_br_print("\nEnter hexadecimal write data: 0x");
+  neo430_uart_scan(buffer, wb_config*2+1, 1); // get right number of hex chars for data plus '\0'
+  uint32_t data = neo430_hexstr_to_uint(buffer, strlen(buffer));
 
-  uart_br_print("\nWriting '0x");
-  uart_print_hex_dword(data);
-  uart_br_print("' to [0x");
-  uart_print_hex_dword(address);
-  uart_br_print("]... ");
-
-  uint8_t w_data8 = (uint8_t)data;
-  uint16_t w_data16 = (uint16_t)data;
-  uint32_t w_data32 = data;
+  neo430_uart_br_print("\nWriting '0x");
+  neo430_uart_print_hex_dword(data);
+  neo430_uart_br_print("' to [0x");
+  neo430_uart_print_hex_dword(address);
+  neo430_uart_br_print("]... ");
 
   // perform access
   if (wb_config == 1)
-    wishbone_write8(address, w_data8);
-  if (wb_config == 2)
-    wishbone_write16(address, w_data16);
-  if (wb_config == 4)
-    wishbone_write32(address, w_data32);
+    neo430_wishbone32_write8_start(address, (uint8_t)data);
+  else if (wb_config == 2)
+    neo430_wishbone32_write16_start(address, (uint16_t)data);
+  else if (wb_config == 4)
+    neo430_wishbone32_write32_start(address, data);
 
-  uart_br_print("Done.\n"); 
+  // wait for transfer to finish
+  uint16_t timeout = 0;
+  while(1){
+    if (!neo430_wishbone_busy())
+      break;
+    if (timeout++ == 100) {
+      neo430_uart_br_print("\nError! Device not responding! Press key to proceed.\n");
+      neo430_wishbone_terminate(); // terminate current transfer
+      while(!neo430_uart_char_received());
+      return;
+    }
+  }
+
+  neo430_uart_br_print("Done.\n"); 
 }
 
 
@@ -268,82 +284,63 @@ void dump_wb(void) {
   char buffer[9];
   uint16_t i = 0;
 
-  uart_br_print("Enter hexadecimal start address: 0x");
-  uart_scan(buffer, 9); // 8 hex chars for address plus '\0'
-  uint32_t address = hex_str_to_uint32(buffer);
+  neo430_uart_br_print("Enter hexadecimal start address: 0x");
+  neo430_uart_scan(buffer, 9, 1); // 8 hex chars for address plus '\0'
+  uint32_t address = neo430_hexstr_to_uint(buffer, strlen(buffer));
 
-  uart_br_print("\nPress any key to start.\n"
-                "You can abort dumping by pressing any key.\n");
-  while(!uart_char_received());
-
-  uint8_t r_data8 = 0;
-  uint16_t r_data16 = 0;
-  uint32_t r_data32 = 0;
+  neo430_uart_br_print("\nPress any key to start.\n"
+                       "You can abort dumping by pressing any key.\n");
+  while(!neo430_uart_char_received());
 
   while(1) {
-    uart_br_print("0x");
-    uart_print_hex_dword(address);
-    uart_br_print(":  ");
+    neo430_uart_br_print("0x");
+    neo430_uart_print_hex_dword(address);
+    neo430_uart_br_print(":  ");
 
     uint16_t border = 16 / wb_config;
     for (i=0; i<border; i++) {
 
-      // perform access
+      // trigger access
       if (wb_config == 1)
-        r_data8 = wishbone_read8(address);
-      if (wb_config == 2)
-        r_data16 = wishbone_read16(address);
-      if (wb_config == 4)
-        r_data32 = wishbone_read32(address);
+        neo430_wishbone32_read8_start(address);
+      else if (wb_config == 2)
+        neo430_wishbone32_read16_start(address);
+      else if (wb_config == 4)
+        neo430_wishbone32_read32_start(address);
 
+      // wait for transfer to finish
+      uint16_t timeout = 0;
+      while(1){
+        if (!neo430_wishbone_busy())
+          break;
+        if (timeout++ == 100) {
+          neo430_uart_br_print("\nError! Device not responding! Press key to proceed.\n");
+          neo430_wishbone_terminate(); // terminate current transfer
+          while(!neo430_uart_char_received());
+          return;
+        }
+      }
+
+      // read data
       if (wb_config == 1) {
-        uart_print_hex_byte(r_data8);
+        neo430_uart_print_hex_byte(neo430_wishbone32_get_data8(address));
         address += 1;
       }
       else if (wb_config == 2) {
-        uart_print_hex_word(r_data16);
+        neo430_uart_print_hex_word(neo430_wishbone32_get_data16(address));
         address += 2;
       }
-      else {
-        uart_print_hex_dword(r_data32);
+      else if (wb_config == 4) {
+        neo430_uart_print_hex_dword(neo430_wishbone32_get_data32());
         address += 4;
       }
-      uart_putc(' ');
 
+      neo430_uart_putc(' ');
     }
-    uart_br_print("\n");
-    if (uart_char_received()) // abort
+
+    neo430_uart_br_print("\n");
+    if (neo430_uart_char_received()) // abort
       return;
   }
 }
 
-
-/* ------------------------------------------------------------
- * INFO Hex-char-string conversion function
- * PARAM String with hex-chars (zero-terminated)
- * not case-sensitive, non-hex chars are treated as '0'
- * RETURN Conversion result (32-bit)
- * ------------------------------------------------------------ */
-uint32_t hex_str_to_uint32(char *buffer) {
-
-  uint16_t length = strlen(buffer);
-  uint32_t res = 0, d = 0;
-  char c = 0;
-
-  while (length--) {
-    c = *buffer++;
-
-    if ((c >= '0') && (c <= '9'))
-      d = (uint32_t)(c - '0');
-    else if ((c >= 'a') && (c <= 'f'))
-      d = (uint32_t)((c - 'a') + 10);
-    else if ((c >= 'A') && (c <= 'F'))
-      d = (uint32_t)((c - 'A') + 10);
-    else
-      d = 0;
-
-    res = res + (d << (length*4));
-  }
-
-  return res;
-}

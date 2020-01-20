@@ -1,7 +1,7 @@
 -- #################################################################################################
 -- #  << NEO430 - Main Control Unit >>                                                             #
 -- # ********************************************************************************************* #
--- #  Central CPU control unit (FSM).                                                              #
+-- # Central CPU control unit (FSM).                                                               #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -21,7 +21,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               28.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 26.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -32,9 +32,6 @@ library neo430;
 use neo430.neo430_package.all;
 
 entity neo430_control is
-  generic (
-    DADD_USE : boolean := true -- implement DADD instruction?
-  );
   port (
     -- global control --
     clk_i     : in  std_ulogic; -- global clock, rising edge
@@ -63,7 +60,7 @@ architecture neo430_control_rtl of neo430_control is
 
   -- state machine --
   type state_t is (RESET, IFETCH_0, IFETCH_1, DECODE,
-    TRANS_0, TRANS_1, TRANS_3, TRANS_4, TRANS_6, TRANS_7, TRANS_8, TRANS_9,
+    TRANS_0, TRANS_1, TRANS_2, TRANS_3, TRANS_4, TRANS_5, TRANS_6, TRANS_7,
     PUSHCALL_0, PUSHCALL_1, PUSHCALL_2,
     RETI_0, RETI_1, RETI_2, RETI_3, RETI_4,
     IRQ_0, IRQ_1, IRQ_2, IRQ_3, IRQ_4, IRQ_5);
@@ -75,9 +72,10 @@ architecture neo430_control_rtl of neo430_control is
   signal sam_nxt, sam      : std_ulogic_vector(01 downto 0); -- CMD according SRC addressing mode
 
   -- irq system --
-  signal irq_start, irq_ack    : std_ulogic;
-  signal irq_ack_mask, irq_buf : std_ulogic_vector(3 downto 0);
-  signal irq_vec_nxt, irq_vec  : std_ulogic_vector(1 downto 0);
+  signal irq_start, irq_ack     : std_ulogic;
+  signal irq_ack_mask, irq_buf  : std_ulogic_vector(3 downto 0);
+  signal irq_vec_nxt, irq_vec   : std_ulogic_vector(1 downto 0);
+  signal i_flag_ff0, i_flag_ff1 : std_ulogic;
 
 begin
 
@@ -151,7 +149,8 @@ begin
     ctrl_nxt <= (others => '0');
     ctrl_nxt(ctrl_rf_adr3_c  downto ctrl_rf_adr0_c)  <= src; -- source reg A
     ctrl_nxt(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) <= ctrl(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c); -- keep ALU function
-    ctrl_nxt(ctrl_rf_as1_c   downto ctrl_rf_as0_c)   <= sam; -- default SRC addressing mode
+    ctrl_nxt(ctrl_rf_as1_c   downto ctrl_rf_as0_c)   <= sam; -- SRC addressing mode
+    ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2 as address offset
     ctrl_nxt(ctrl_mem_rd_c) <= mem_rd_ff; -- memory read
     ctrl_nxt(ctrl_alu_bw_c) <= ctrl(ctrl_alu_bw_c); -- keep byte/word mode
 
@@ -185,9 +184,9 @@ begin
         sam_nxt <= "00"; -- SRC address mode = REG
         ctrl_nxt(ctrl_alu_bw_c) <= '0'; -- word mode
         ctrl_nxt(ctrl_rf_ad_c)  <= '0'; -- DST address mode = REG
-        ctrl_nxt(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) <= alu_mov_c;
+        ctrl_nxt(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) <= alu_mov_c; -- keep this for all following states
         ctrl_nxt(ctrl_rf_adr3_c  downto ctrl_rf_adr0_c)  <= reg_pc_c; -- source/destination: PC
-        ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "10"; -- add +2
+        ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2
         ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
         ctrl_nxt(ctrl_adr_bp_en_c) <= '1'; -- directly output PC/IRQ vector
         if (irq_start = '1') then -- execute IRQ
@@ -212,8 +211,7 @@ begin
           if (instr_i(13) = '1') then -- BRANCH INSTRUCTION
           -- ------------------------------------------------------------
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_pc_c; -- source/destination: PC
-            ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "00"; -- add immediate offset
-            ctrl_nxt(ctrl_adr_imm_en_c) <= '1'; -- add immediate
+            ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "000"; -- add immediate offset
             ctrl_nxt(ctrl_rf_in_sel_c)  <= '1'; -- select addr feedback
             ctrl_nxt(ctrl_rf_wb_en_c)   <= branch_taken; -- valid RF write back if branch taken
             state_nxt <= IFETCH_0;
@@ -235,10 +233,10 @@ begin
               when "100"  => state_nxt <= TRANS_0; -- PUSH (via single ALU OP)
               when "101"  => state_nxt <= TRANS_0; -- CALL (via single ALU OP)
               when "110"  => state_nxt <= RETI_0; -- RETI
-              when "111"  => state_nxt <= IFETCH_0; -- undefined
+              when "111"  => state_nxt <= IFETCH_0; -- undefined (for detecting invalid opcodes)
               when others => state_nxt <= TRANS_0; -- single ALU OP
             end case;
-          else -- Undefined
+          else -- Undefined (for detecting invalid opcodes)
             -- ------------------------------------------------------------
             state_nxt <= IFETCH_0;
           end if;
@@ -273,10 +271,10 @@ begin
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_pc_c; -- source/destination: PC
             ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
             mem_rd <= '1'; -- Memory read
-            ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "10"; -- add +2
+            ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2
             ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
             ctrl_nxt(ctrl_rf_wb_en_c) <= '1'; -- valid RF write back
-            state_nxt <= TRANS_3;
+            state_nxt <= TRANS_2;
           when "0010" | "0011" | "1010" | "1011" =>
             -- "001-" = CLASS  I, SRC/DST: indexed/symbolic/absolute
             -- "1010" = CLASS II, SRC: indexed/symbolic/absolute, DST: register direct
@@ -284,7 +282,7 @@ begin
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_pc_c; -- source/destination: PC
             ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
             mem_rd <= '1'; -- Memory read
-            ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "10"; -- add +2
+            ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2
             ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
             ctrl_nxt(ctrl_rf_wb_en_c) <= '1'; -- valid RF write back
             state_nxt <= TRANS_1;
@@ -304,9 +302,9 @@ begin
             ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
             mem_rd <= '1'; -- Memory read
             if (ir(6) = '0') or (src = reg_pc_c) then -- word mode (force if accessing PC)
-              ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "10"; -- add +2
+              ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2
             else -- byte mode
-              ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "01"; -- add +1
+              ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "001"; -- add +1
             end if;
             ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
             ctrl_nxt(ctrl_rf_wb_en_c) <= '1'; -- valid RF write back
@@ -326,7 +324,7 @@ begin
             if (spec_cmd_v = '1') then -- push or call
               state_nxt <= PUSHCALL_0;
             else
-              state_nxt <= TRANS_8;
+              state_nxt <= TRANS_6;
             end if;
           when "0010" | "0011" | "1010" | "0100" | "0101" | "1100" | "0110" | "0111" | "1110" =>
             -- "001-" = CLASS  I, SRC/DST: indexed/symbolic/absolute
@@ -338,7 +336,7 @@ begin
             ctrl_nxt(ctrl_rf_as1_c downto ctrl_rf_as0_c)   <= "00"; -- DST address mode = REG
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= ir(3 downto 0); -- source: reg B
             ctrl_nxt(ctrl_alu_opb_wr_c) <= '1'; -- write OpB
-            state_nxt <= TRANS_3;
+            state_nxt <= TRANS_2;
           when others =>
             -- "1011" = CLASS II, SRC: indexed/symbolic/absolute, DST: indexed
             -- "1101" = CLASS II, SRC: indirect, DST: indexed
@@ -346,13 +344,13 @@ begin
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_pc_c; -- source/destination: PC
             ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
             mem_rd <= '1'; -- Memory read
-            ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "10"; -- add +2
+            ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2
             ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
             ctrl_nxt(ctrl_rf_wb_en_c) <= '1'; -- valid RF write back
-            state_nxt <= TRANS_3;
+            state_nxt <= TRANS_2;
         end case;
 
-      when TRANS_3 => -- operand transfer cycle 3
+      when TRANS_2 => -- operand transfer cycle 3
       -- ------------------------------------------------------------
         case am is -- addressing mode
           when "0000" | "0001" | "1000" | "1001" =>
@@ -361,17 +359,17 @@ begin
             -- "1001" = CLASS II, SRC: register direct, DST: indexed
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= src; -- source: reg A
             ctrl_nxt(ctrl_alu_opa_wr_c) <= '1'; -- write OpA
-            state_nxt <= TRANS_4;
+            state_nxt <= TRANS_3;
           when "0010" | "0011" | "1010" | "1011" =>
             -- "001-" = CLASS  I: SRC/DST: indexed/symbolic/absolute
             -- "1010" = CLASS II, SRC: indexed/symbolic/absolute, DST: register direct
             -- "1011" = CLASS II, SRC: indexed/symbolic/absolute, DST: indexed
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= src; -- source: reg A
-            ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "00"; -- add memory data in
+            ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "1--"; -- add memory data in
             ctrl_nxt(ctrl_adr_mar_sel_c) <= '1'; -- use result from adder
             ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
             mem_rd <= '1'; -- Memory read
-            state_nxt <= TRANS_4;
+            state_nxt <= TRANS_3;
           when "0100" | "0101" | "1100" | "0110" | "0111" | "1110" =>
             -- "010-" = CLASS  I: SRC/DST: indirect
             -- "1100" = CLASS II, SRC: indirect, DST: register direct
@@ -382,17 +380,17 @@ begin
             if (spec_cmd_v = '1') then -- push or call
               state_nxt <= PUSHCALL_0;
             else
-              state_nxt <= TRANS_8;
+              state_nxt <= TRANS_6;
             end if;
           when others =>
             -- "1101" = CLASS II, SRC: indirect, DST: indexed
             -- "1111" = CLASS II, SRC: indirect auto inc, DST: indexed
             ctrl_nxt(ctrl_alu_in_sel_c) <= '1'; -- get data from memory
             ctrl_nxt(ctrl_alu_opa_wr_c) <= '1'; -- write OpA
-            state_nxt <= TRANS_4;
+            state_nxt <= TRANS_3;
         end case;
 
-      when TRANS_4 => -- operand transfer cycle 4
+      when TRANS_3 => -- operand transfer cycle 4
       -- ------------------------------------------------------------
         case am is -- addressing mode
           when "1001" | "1011" | "1101" | "1111" =>
@@ -403,18 +401,18 @@ begin
             ctrl_nxt(ctrl_rf_as1_c) <= '0'; -- DST address mode = REG or INDEXED
             ctrl_nxt(ctrl_rf_as0_c) <= ir(7); -- DST address mode = REG or INDEXED
             ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= ir(3 downto 0); -- source: reg B
-            ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "00"; -- add memory data in
+            ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "1--"; -- add memory data in
             ctrl_nxt(ctrl_adr_mar_sel_c) <= '1'; -- use result from adder
             ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
             if (ctrl(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) /= alu_mov_c) then -- no read for MOV
               mem_rd <= '1'; -- Memory read
             end if;
-            state_nxt <= TRANS_6;
+            state_nxt <= TRANS_4;
           when others =>
-            state_nxt <= TRANS_6; -- NOP / DONT CARE
+            state_nxt <= TRANS_4; -- NOP / DONT CARE
         end case;
 
-      when TRANS_6 => -- operand transfer cycle 6
+      when TRANS_4 => -- operand transfer cycle 6
       -- ------------------------------------------------------------
         case am is -- addressing mode
           when "0010" | "0011" | "1010" =>
@@ -425,36 +423,36 @@ begin
             if (spec_cmd_v = '1') then -- push or call
               state_nxt <= PUSHCALL_0;
             else
-              state_nxt <= TRANS_8;
+              state_nxt <= TRANS_6;
             end if;
           when "1011" =>
             -- "1011" = CLASS II,SRC: indexed/symbolic/absolute, DST: indexed
             ctrl_nxt(ctrl_alu_in_sel_c) <= '1'; -- get data from memory
             ctrl_nxt(ctrl_alu_opa_wr_c) <= '1'; -- write to OpA
-            state_nxt <= TRANS_7;
+            state_nxt <= TRANS_5;
           when others =>
             -- "000-" = CLASS  I, SRD/DST:  CLASS II, 
             -- "1000" = CLASS II, SRC: register direct, DST: register direct = DONT CARE
             -- "1001" = CLASS II, SRC: register direct, DST: indexed = NOP
             -- others: NOP
-            state_nxt <= TRANS_7; -- NOP / DONT CARE
+            state_nxt <= TRANS_5; -- NOP / DONT CARE
         end case;
 
-      when TRANS_7 => -- operand transfer cycle 7
+      when TRANS_5 => -- operand transfer cycle 7
       -- ------------------------------------------------------------
         ctrl_nxt(ctrl_alu_in_sel_c) <= '1'; -- get data from memory
         ctrl_nxt(ctrl_alu_opb_wr_c) <= '1'; -- write to OpA
         if (spec_cmd_v = '1') then -- push or call
           state_nxt <= PUSHCALL_0;
         else
-          state_nxt <= TRANS_8; -- single/dual ALU operation
+          state_nxt <= TRANS_6; -- single/dual ALU operation
         end if;
 
-      when TRANS_8 => -- operand transfer cycle 8
+      when TRANS_6 => -- operand transfer cycle 8
       -- ------------------------------------------------------------
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= ir(3 downto 0); -- destination
-        if (ctrl(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) = alu_dadd_c) and (DADD_USE = true) then
-          state_nxt <= TRANS_9;
+        if (ctrl(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) = alu_dadd_c) and (use_dadd_cmd_c = true) then
+          state_nxt <= TRANS_7;
         else
           ctrl_nxt(ctrl_rf_fup_c) <= not spec_cmd_v; -- update ALU status flags
           if (am(0) = '0') then -- DST: register direct
@@ -465,7 +463,7 @@ begin
           state_nxt <= IFETCH_0; -- done!
         end if;
 
-      when TRANS_9 => -- operand transfer cycle 9
+      when TRANS_7 => -- operand transfer cycle 9
       -- ------------------------------------------------------------
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= ir(3 downto 0); -- destination
         ctrl_nxt(ctrl_rf_fup_c) <= not spec_cmd_v; -- update ALU status flags
@@ -480,7 +478,7 @@ begin
       when PUSHCALL_0 => -- PUSH/CALL cycle 0 (stack update)
       -- ------------------------------------------------------------
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_sp_c; -- source/destination: SP
-        ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "11"; -- add -2
+        ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "011"; -- add -2
         ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
         ctrl_nxt(ctrl_adr_mar_sel_c) <= '1'; -- use result from adder
         ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
@@ -509,7 +507,7 @@ begin
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_sp_c; -- source/destination: SP
         ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
         mem_rd <= '1'; -- Memory read
-        ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "10"; -- add +2
+        ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2
         ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
         ctrl_nxt(ctrl_rf_wb_en_c) <= '1'; -- valid RF write back
         state_nxt <= RETI_1;
@@ -519,7 +517,7 @@ begin
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_sp_c; -- source/destination: SP
         ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
         mem_rd <= '1'; -- Memory read
-        ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "10"; -- add +2
+        ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "010"; -- add +2
         ctrl_nxt(ctrl_rf_in_sel_c) <= '1'; -- select addr feedback
         ctrl_nxt(ctrl_rf_wb_en_c) <= '1'; -- valid RF write back
         state_nxt <= RETI_2;
@@ -547,48 +545,45 @@ begin
 
       when IRQ_0 => -- IRQ processing cycle 0: SP=SP-2, disable sleep mode
       -- ------------------------------------------------------------
-        ctrl_nxt(ctrl_rf_dsleep_c)   <= '1'; -- disable sleep mode
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_sp_c; -- source/destination: SP
         ctrl_nxt(ctrl_adr_mar_wr_c)  <= '1'; -- write to MAR
-        ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "11"; -- add -2
+        ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "011"; -- add -2
         ctrl_nxt(ctrl_adr_mar_sel_c) <= '1'; -- use result from adder
         ctrl_nxt(ctrl_rf_in_sel_c)   <= '1'; -- select addr feedback
         ctrl_nxt(ctrl_rf_wb_en_c)    <= '1'; -- valid RF write back
+        ctrl_nxt(ctrl_rf_dsleep_c)   <= '1'; -- disable sleep mode
         state_nxt <= IRQ_1;
 
       when IRQ_1 => -- IRQ processing cycle 1: Buffer PC for memory write
       -- ------------------------------------------------------------
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_pc_c; -- source: PC
         ctrl_nxt(ctrl_alu_opa_wr_c) <= '1'; -- write PC to OpA
-        ctrl_nxt(ctrl_alu_opb_wr_c) <= '1'; -- write PC to OpB
         state_nxt <= IRQ_2;
 
       when IRQ_2 => -- IRQ processing cycle 2: Write PC (push), SP=SP-2
       -- ------------------------------------------------------------
-        ctrl_nxt(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) <= alu_mov_c;
-        ctrl_nxt(ctrl_mem_wr_c) <= '1'; -- write memory request (store PC)
+        ctrl_nxt(ctrl_mem_wr_c)      <= '1'; -- write memory request (store PC)
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_sp_c; -- source/destination: SP
-        ctrl_nxt(ctrl_adr_mar_wr_c) <= '1'; -- write to MAR
-        ctrl_nxt(ctrl_adr_off1_c downto ctrl_adr_off0_c) <= "11"; -- add -2
+        ctrl_nxt(ctrl_adr_mar_wr_c)  <= '1'; -- write to MAR
+        ctrl_nxt(ctrl_adr_off2_c downto ctrl_adr_off0_c) <= "011"; -- add -2
         ctrl_nxt(ctrl_adr_mar_sel_c) <= '1'; -- use result from adder
         ctrl_nxt(ctrl_rf_in_sel_c)   <= '1'; -- select addr feedback
         ctrl_nxt(ctrl_rf_wb_en_c)    <= '1'; -- valid RF write back
         state_nxt <= IRQ_3;
 
-      when IRQ_3 => -- IRQ processing cycle 3: Buffer SR for memory write, clear SR, set IRQ vector address
+      when IRQ_3 => -- IRQ processing cycle 3: Buffer SR for memory write, set IRQ vector address, disable interrupt enable flag in SR
       -- ------------------------------------------------------------
         ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_sr_c; -- source: SR
-        ctrl_nxt(ctrl_alu_opa_wr_c) <= '1'; -- write to OpA
-        ctrl_nxt(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) <= alu_bic_c; -- output zero
-        ctrl_nxt(ctrl_rf_wb_en_c)    <= '1'; -- valid RF write back (clear SR)
+        ctrl_nxt(ctrl_alu_opa_wr_c)  <= '1'; -- write SR to OpA
         ctrl_nxt(ctrl_adr_bp_en_c)   <= '1'; -- directly output PC/IRQ vector
         ctrl_nxt(ctrl_adr_ivec_oe_c) <= '1'; -- output IRQ vector
         ctrl_nxt(ctrl_mem_rd_c)      <= '1'; -- Memory read (fast)
+        ctrl_nxt(ctrl_rf_dgie_c)     <= '1'; -- disable interrupt enable flag
+        irq_ack                      <= '1'; -- acknowledge IRQ
         state_nxt <= IRQ_4;
 
       when IRQ_4 => -- IRQ processing cycle 4: Write SR (push), get IRQ vector
       -- ------------------------------------------------------------
-        ctrl_nxt(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) <= alu_mov_c;
         ctrl_nxt(ctrl_mem_wr_c)     <= '1'; -- write memory request
         ctrl_nxt(ctrl_alu_in_sel_c) <= '1'; -- get data from memory
         ctrl_nxt(ctrl_alu_opa_wr_c) <= '1'; -- write to OpA
@@ -596,10 +591,8 @@ begin
 
       when IRQ_5 => -- IRQ processing cycle 5: Store IRQ vector to PC
       -- ------------------------------------------------------------
-        ctrl_nxt(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) <= alu_mov_c;
-        ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c)   <= reg_pc_c; -- destination: PC
+        ctrl_nxt(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) <= reg_pc_c; -- destination: PC
         ctrl_nxt(ctrl_rf_wb_en_c) <= '1'; -- valid RF write back
-        irq_ack   <= '1'; -- acknowledge IRQ
         state_nxt <= IFETCH_0; -- done!
 
 
@@ -613,30 +606,23 @@ begin
 
   -- Interrupt Controller -----------------------------------------------------
   -- -----------------------------------------------------------------------------
-  irq_controller: process(rst_i, clk_i)
+  irq_buffer: process(clk_i)
   begin
-    if (rst_i = '0') then
-      irq_buf   <= (others => '0');
-      irq_vec   <= (others => '0');
-      irq_start <= '0'; -- starting IRQ handler
-    elsif rising_edge(clk_i) then
-      -- gather IRQs --
+    if rising_edge(clk_i) then
+      -- delay I flag 2 cycles to allow the interrupted program to execute at least one insruction even if we have
+      -- a permanent interrupt request
+      i_flag_ff0 <= sreg_i(sreg_i_c);
+      i_flag_ff1 <= i_flag_ff0;
+      -- interrupt vector and queue buffer --
+      irq_vec <= irq_vec_nxt;
       for i in 0 to 3 loop
         irq_buf(i) <= (irq_buf(i) or irq_i(i)) and (not sreg_i(sreg_q_c)) and (not irq_ack_mask(i));
       end loop; -- i
-      -- starting IRQ --
-      if (irq_start = '0') then -- no starting IRQ
-        irq_vec <= irq_vec_nxt;
-        if (irq_buf /= "0000") and (sreg_i(sreg_i_c) = '1') then
-          irq_start <= '1';
-        end if;
-      -- clear start flag when entering IRQ service routinge (auto clear of I flag)
-      -- or manually abort IRQ start by clearing the I flag
-      elsif (sreg_i(sreg_i_c) = '0') then
-        irq_start <= '0';
-      end if;
     end if;
-  end process irq_controller;
+  end process irq_buffer;
+
+  -- valid start of IRQ handler --
+  irq_start <= '1' when (irq_buf /= "0000") and (i_flag_ff1 = '1') and (sreg_i(sreg_i_c) = '1') else '0';
 
   -- acknowledge mask --
   irq_ack_mask_gen: process(irq_ack, irq_vec)
@@ -658,15 +644,17 @@ begin
   -- interrupt priority encoder --
   irq_priority: process(irq_buf)
   begin
-    if (irq_buf(0) = '1') then
-      irq_vec_nxt <= "00";
-    elsif (irq_buf(1) = '1') then
-      irq_vec_nxt <= "01";
-    elsif (irq_buf(2) = '1') then
-      irq_vec_nxt <= "10";
-    else --if (irq_buf(3) = '1') then
-      irq_vec_nxt <= "11";
-    end if;
+    -- use "case" here to prevent a MUX chain
+    case irq_buf is
+      when "0001" | "0011" | "0101" | "0111" | "1001" | "1011" | "1101" | "1111" => -- "---1"
+        irq_vec_nxt <= "00";
+      when "0010" | "0110" | "1010" | "1110" => -- "--10"
+        irq_vec_nxt <= "01";
+      when "0100" | "1100" => -- "-100"
+        irq_vec_nxt <= "10";
+      when others => -- "1000"
+        irq_vec_nxt <= "11";
+    end case;
   end process irq_priority;
 
   -- interrupt vector output --

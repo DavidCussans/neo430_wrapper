@@ -1,7 +1,7 @@
 -- #################################################################################################
 -- #  << NEO430 - CPU Register File >>                                                             #
 -- # ********************************************************************************************* #
--- #  General data registers, program counter, status register and constant generator.             #
+-- # General data registers, program counter, status register and constant generator.              #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -21,7 +21,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               11.11.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 29.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -33,7 +33,8 @@ use neo430.neo430_package.all;
 
 entity neo430_reg_file is
   generic (
-    BOOTLD_USE : boolean := true -- implement and use bootloader?
+    BOOTLD_USE  : boolean := true; -- implement and use bootloader?
+    IMEM_AS_ROM : boolean := false -- implement IMEM as read-only memory?
   );
   port (
     -- global control --
@@ -42,7 +43,7 @@ entity neo430_reg_file is
     -- data input --
     alu_i  : in  std_ulogic_vector(15 downto 0); -- data from alu
     addr_i : in  std_ulogic_vector(15 downto 0); -- data from addr unit
-    flag_i : in  std_ulogic_vector(03 downto 0); -- new ALU flags
+    flag_i : in  std_ulogic_vector(04 downto 0); -- new ALU flags
     -- control --
     ctrl_i : in  std_ulogic_vector(ctrl_width_c-1 downto 0);
     -- data output --
@@ -57,12 +58,13 @@ architecture neo430_reg_file_rtl of neo430_reg_file is
   -- boot from beginning of boot ROM (boot_base_c) if bootloader is used, otherwise boot from beginning of IMEM (imem_base_c)
   -- By not using a reset-like init of the PC, the whole register file (except for SR and CG)
   -- can be mapped to distributed RAM saving logic resources
-  constant pc_boot_addr_c : std_ulogic_vector(15 downto 0) := cond_sel_stdulogicvector(BOOTLD_USE, boot_base_c, imem_base_c);
+  constant pc_boot_addr_c : std_ulogic_vector(15 downto 0) := cond_sel_stdulogicvector_f(BOOTLD_USE, boot_base_c, imem_base_c);
 
   -- register file (including dummy regs) --
   type   reg_file_t is array (15 downto 0) of std_ulogic_vector(15 downto 0);
   signal reg_file : reg_file_t;
   signal sreg     : std_ulogic_vector(15 downto 0);
+  signal sreg_int : std_ulogic_vector(15 downto 0);
 
   --- RAM attribute to inhibit bypass-logic - Altera only! ---
   attribute ramstyle : string;
@@ -86,7 +88,7 @@ begin
     if (rst_i = '0') then
       sreg <= (others => '0'); -- here we NEED a true hardware reset
     elsif rising_edge(clk_i) then
-      -- status register --
+      -- physical status register --
       if ((ctrl_i(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) = reg_sr_c) and
           (ctrl_i(ctrl_rf_ad_c) = '0') and (ctrl_i(ctrl_rf_wb_en_c) = '1')) then -- only write in reg-addr-mode!
         sreg(sreg_c_c) <= in_data(sreg_c_c);
@@ -96,26 +98,68 @@ begin
         sreg(sreg_s_c) <= in_data(sreg_s_c);
         sreg(sreg_v_c) <= in_data(sreg_v_c);
         sreg(sreg_q_c) <= in_data(sreg_q_c);
-        sreg(sreg_r_c) <= in_data(sreg_r_c);
+        if (use_xalu_c = true) then -- implement parity computation?
+          sreg(sreg_p_c) <= in_data(sreg_p_c);
+        end if;
+        if (IMEM_AS_ROM = false) then -- r-flag is 0 when IMEM is ROM
+          sreg(sreg_r_c) <= in_data(sreg_r_c);
+        end if;
       else -- automatic update
         sreg(sreg_q_c) <= '0'; -- auto-clear
-        if (ctrl_i(ctrl_rf_dsleep_c) = '1') then -- disable sleep mode
+        -- disable sleep mode --
+        if (ctrl_i(ctrl_rf_dsleep_c) = '1') then
           sreg(sreg_s_c) <= '0';
         end if;
-        if (ctrl_i(ctrl_rf_fup_c) = '1') then -- update ALU flags
+        -- disable interrupt enable --
+        if (ctrl_i(ctrl_rf_dgie_c) = '1') then
+          sreg(sreg_i_c) <= '0';
+        end if;
+         -- update ALU flags --
+        if (ctrl_i(ctrl_rf_fup_c) = '1') then
           sreg(sreg_c_c) <= flag_i(flag_c_c);
           sreg(sreg_z_c) <= flag_i(flag_z_c);
           sreg(sreg_n_c) <= flag_i(flag_n_c);
           sreg(sreg_v_c) <= flag_i(flag_v_c);
+          if (use_xalu_c = true) then -- implement parity computation?
+            sreg(sreg_p_c) <= flag_i(flag_p_c);
+          end if;
         end if;
       end if;
     end if;
   end process sreg_write;
 
-  -- status register output --
-  sreg_o <= sreg;
+  -- construct logical status register --
+  sreg_combine: process(sreg)
+  begin
+    -- SREG for system --
+    sreg_o <= (others => '0');
+    sreg_o(sreg_c_c) <= sreg(sreg_c_c);
+    sreg_o(sreg_z_c) <= sreg(sreg_z_c);
+    sreg_o(sreg_n_c) <= sreg(sreg_n_c);
+    sreg_o(sreg_i_c) <= sreg(sreg_i_c);
+    sreg_o(sreg_s_c) <= sreg(sreg_s_c);
+    sreg_o(sreg_v_c) <= sreg(sreg_v_c);
+    sreg_o(sreg_q_c) <= sreg(sreg_q_c);
+    sreg_o(sreg_r_c) <= sreg(sreg_r_c);
+    if (use_xalu_c = true) then -- implement parity computation?
+      sreg_o(sreg_p_c) <= sreg(sreg_p_c);
+    end if;
+    -- SREG for user --
+    sreg_int <= (others => '0');
+    sreg_int(sreg_c_c) <= sreg(sreg_c_c);
+    sreg_int(sreg_z_c) <= sreg(sreg_z_c);
+    sreg_int(sreg_n_c) <= sreg(sreg_n_c);
+    sreg_int(sreg_i_c) <= sreg(sreg_i_c);
+    sreg_int(sreg_s_c) <= sreg(sreg_s_c);
+    sreg_int(sreg_v_c) <= sreg(sreg_v_c);
+  --sreg_int(sreg_q_c) <= sreg(sreg_q_c); -- is always zero for user
+    sreg_int(sreg_r_c) <= sreg(sreg_r_c);
+    if (use_xalu_c = true) then -- implement parity computation?
+      sreg_int(sreg_p_c) <= sreg(sreg_p_c);
+    end if;
+  end process sreg_combine;
 
-  -- gp regs (including PC, dummy SR and dummy CG) --
+  -- general purpose register file (including PC, SP, dummy SR and dummy CG) --
   rf_write: process(clk_i)
   begin
     if rising_edge(clk_i) then
@@ -128,15 +172,15 @@ begin
 
   -- Register File Read Access ------------------------------------------------
   -- -----------------------------------------------------------------------------
-  rf_read: process(ctrl_i, reg_file, sreg)
-    variable const_sel_v : std_ulogic_vector(02 downto 0);
+  rf_read: process(ctrl_i, reg_file, sreg_int)
+    variable const_sel_v : std_ulogic_vector(2 downto 0);
   begin
     if ((ctrl_i(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) = reg_sr_c) or
         (ctrl_i(ctrl_rf_adr3_c downto ctrl_rf_adr0_c) = reg_cg_c)) then
       -- constant generator / SR read access --
       const_sel_v := ctrl_i(ctrl_rf_adr0_c) & ctrl_i(ctrl_rf_as1_c) & ctrl_i(ctrl_rf_as0_c);
       case const_sel_v is
-        when "000"  => data_o <= sreg; -- read SR
+        when "000"  => data_o <= sreg_int; -- read SR
         when "001"  => data_o <= x"0000"; -- absolute addressing mode
         when "010"  => data_o <= x"0004"; -- +4
         when "011"  => data_o <= x"0008"; -- +8
@@ -144,10 +188,9 @@ begin
         when "101"  => data_o <= x"0001"; -- +1
         when "110"  => data_o <= x"0002"; -- +2
         when "111"  => data_o <= x"FFFF"; -- -1
-        when others => data_o <= x"0000";
+        when others => data_o <= (others => '-');
       end case;
-    else
-      -- sp / gp register file read access --
+    else -- gp register file read access
       data_o <= reg_file(to_integer(unsigned(ctrl_i(ctrl_rf_adr3_c downto ctrl_rf_adr0_c))));
     end if;
   end process rf_read;

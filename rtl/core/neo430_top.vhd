@@ -1,23 +1,32 @@
 -- #################################################################################################
--- #  << NEO430 - Processor Top Entity (neo430_top.vhd) >>                                         #
+-- #  << NEO430 - Processor Top Entity >>                                                          #
 -- # ********************************************************************************************* #
--- #  This is the top entity of the neo430 processor. Instantiate this unit in your own project    #
--- #  and define all the configuration generics according to your requirements.                    #
+-- # This is the top entity of the NEO430 processor. Instantiate this unit in your own project and #
+-- # define all the configuration generics according to your needs. Alternatively, you can use one #
+-- # of the other top entities provided in rtl\top_templates                                       #
+-- # Check the processor's documentary for more information: doc\NEO430.pdf                        #
 -- # ********************************************************************************************* #
 -- #  The NEO430 processor:                                                                        #
 -- #  - Reset and clock generators                                                                 #
 -- #  - External IRQ synchronizer                                                                  #
--- #  - NEO430 CPU (MSP430(TM)-ISA-compatible)                                                     #
--- #  - Internal ROM (IMEM, configurable size) for code                                            #
--- #  - Internal RAM (DMEM, configurable size) for data (and code)                                 #
--- #  - Optional 16-bit multiplier/divider unit                                                    #
--- #  - Optional 16bit IN and 16bit OUT GPIO port                                                  #
--- #  - Optional 32-bit Wishbone interface                                                         #
--- #  - Optional High precision timer                                                              #
--- #  - Optional USART - SPI and UART                                                              #
--- #  - Optional Internal ROM bootloader                                                           #
--- #  - Optional Watchdog Timer                                                                    #
--- #  - Sysconfig (infomem for various system information & interrupt vector configuration)        #
+-- #  - NEO430 CPU (MSP430(TM)-ISA-compatible) (CPU)                                               #
+-- #  - Internal RAM or ROM (configurable size) for code (IMEM)                                    #
+-- #  - Internal RAM (configurable size) for data (and code) (DMEM)                                #
+-- #  - Sysconfig (infomem for various system information) (SYSCONFIG)                             #
+-- #  - Optional 16-bit multiplier/divider unit (MULDIV)                                           #
+-- #  - Optional 16-bit IN and 16-bit OUT GPIO port with pin-change interrupt (GPIO)               #
+-- #  - Optional 32-bit Wishbone interface (WB32)                                                  #
+-- #  - Optional High precision timer (TIMER)                                                      #
+-- #  - Optional Universal Asynchronous Receiver and Transmitter (UART)                            #
+-- #  - Optional Serial Peripheral Interface (SPI)                                                 #
+-- #  - Optional Internal ROM for bootloader (BOOTLD)                                              #
+-- #  - Optional Watchdog Timer (WDT)                                                              #
+-- #  - Optional CRC16/32 Module (CRC16/32)                                                        #
+-- #  - Optional Custom Functions Unit to implement user-defined processor extension (CFU)         #
+-- #  - Optional Pulse Width Modulation controller (PWM)                                           #
+-- #  - Optional Two Wire Serial Interface (TWI)                                                   #
+-- #  - Optional True Random Number Generator (TRNG)                                               #
+-- #  - OPtional External Interrupts Controller (EXIRQ)                                            #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -37,7 +46,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               01.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 09.12.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -47,25 +56,32 @@ use ieee.numeric_std.all;
 library neo430;
 use neo430.neo430_package.all;
 
+
 entity neo430_top is
   generic (
     -- general configuration --
     CLOCK_SPEED : natural := 100000000; -- main clock in Hz
-    IMEM_SIZE   : natural := 4*1024; -- internal IMEM size in bytes, max 32kB (default=4kB)
-    DMEM_SIZE   : natural := 2*1024; -- internal DMEM size in bytes, max 28kB (default=2kB)
+    IMEM_SIZE   : natural := 4*1024; -- internal IMEM size in bytes, max 48kB (default=4kB)
+    DMEM_SIZE   : natural := 2*1024; -- internal DMEM size in bytes, max 12kB (default=2kB)
     -- additional configuration --
     USER_CODE   : std_ulogic_vector(15 downto 0) := x"0000"; -- custom user code
     -- module configuration --
-    DADD_USE    : boolean := true; -- implement DADD instruction? (default=true)
-    MULDIV_USE  : boolean := true; -- implement multiplier/divider unit? (default=true)
-    WB32_USE    : boolean := true; -- implement WB32 unit? (default=true)
-    WDT_USE     : boolean := true; -- implement WDT? (default=true)
-    GPIO_USE    : boolean := true; -- implement GPIO unit? (default=true)
-    TIMER_USE   : boolean := true; -- implement timer? (default=true)
-    USART_USE   : boolean := true; -- implement USART? (default=true)
+    MULDIV_USE  : boolean := true;  -- implement multiplier/divider unit? (default=true)
+    WB32_USE    : boolean := true;  -- implement WB32 unit? (default=true)
+    WDT_USE     : boolean := true;  -- implement WDT? (default=true)
+    GPIO_USE    : boolean := true;  -- implement GPIO unit? (default=true)
+    TIMER_USE   : boolean := true;  -- implement timer? (default=true)
+    UART_USE    : boolean := true;  -- implement UART? (default=true)
+    CRC_USE     : boolean := true;  -- implement CRC unit? (default=true)
+    CFU_USE     : boolean := false; -- implement custom functions unit? (default=false)
+    PWM_USE     : boolean := true;  -- implement PWM controller? (default=true)
+    TWI_USE     : boolean := true;  -- implement two wire serial interface? (default=true)
+    SPI_USE     : boolean := true;  -- implement SPI? (default=true)
+    TRNG_USE    : boolean := false; -- implement TRNG? (default=false)
+    EXIRQ_USE   : boolean := true;  -- implement EXIRQ? (default=true)
     -- boot configuration --
-    BOOTLD_USE  : boolean := true; -- implement and use bootloader? (default=true)
-    IMEM_AS_ROM : boolean := false -- implement IMEM as read-only memory? (default=false)
+    BOOTLD_USE  : boolean := true;  -- implement and use bootloader? (default=true)
+    IMEM_AS_ROM : boolean := false  -- implement IMEM as read-only memory? (default=false)
   );
   port (
     -- global control --
@@ -74,13 +90,17 @@ entity neo430_top is
     -- parallel io --
     gpio_o     : out std_ulogic_vector(15 downto 0); -- parallel output
     gpio_i     : in  std_ulogic_vector(15 downto 0); -- parallel input
+    -- pwm channels --
+    pwm_o      : out std_ulogic_vector(03 downto 0); -- pwm channels
     -- serial com --
     uart_txd_o : out std_ulogic; -- UART send data
     uart_rxd_i : in  std_ulogic; -- UART receive data
     spi_sclk_o : out std_ulogic; -- serial clock line
     spi_mosi_o : out std_ulogic; -- serial data line out
     spi_miso_i : in  std_ulogic; -- serial data line in
-    spi_cs_o   : out std_ulogic_vector(05 downto 0); -- SPI CS 0..5
+    spi_cs_o   : out std_ulogic_vector(07 downto 0); -- SPI CS 0..7
+    twi_sda_io : inout std_logic; -- twi serial data line
+    twi_scl_io : inout std_logic; -- twi serial clock line
     -- 32-bit wishbone interface --
     wb_adr_o   : out std_ulogic_vector(31 downto 0); -- address
     wb_dat_i   : in  std_ulogic_vector(31 downto 0); -- read data
@@ -90,25 +110,31 @@ entity neo430_top is
     wb_stb_o   : out std_ulogic; -- strobe
     wb_cyc_o   : out std_ulogic; -- valid cycle
     wb_ack_i   : in  std_ulogic; -- transfer acknowledge
-    -- external interrupt --
-    irq_i      : in  std_ulogic; -- external interrupt request line
-    irq_ack_o  : out std_ulogic  -- external interrupt request acknowledge
+    -- external interrupts --
+    ext_irq_i  : in  std_ulogic_vector(07 downto 0); -- external interrupt request lines
+    ext_ack_o  : out std_ulogic_vector(07 downto 0)  -- external interrupt request acknowledges
   );
 end neo430_top;
+
 
 architecture neo430_top_rtl of neo430_top is
 
   -- generators --
+  signal rst_i_sync0  : std_ulogic;
+  signal rst_i_sync1  : std_ulogic;
   signal rst_gen      : std_ulogic_vector(03 downto 0) := (others => '0'); -- perform reset on bitstream upload
-  signal rst_gen_sync : std_ulogic_vector(01 downto 0);
   signal ext_rst      : std_ulogic;
   signal sys_rst      : std_ulogic;
   signal wdt_rst      : std_ulogic;
   signal clk_div      : std_ulogic_vector(11 downto 0);
+  signal clk_div_ff   : std_ulogic_vector(11 downto 0);
   signal clk_gen      : std_ulogic_vector(07 downto 0);
   signal timer_cg_en  : std_ulogic;
-  signal usart_cg_en  : std_ulogic;
+  signal uart_cg_en   : std_ulogic;
+  signal spi_cg_en    : std_ulogic;
   signal wdt_cg_en    : std_ulogic;
+  signal pwm_cg_en    : std_ulogic;
+  signal twi_cg_en    : std_ulogic;
 
   type cpu_bus_t is record
     rd_en : std_ulogic;
@@ -118,13 +144,13 @@ architecture neo430_top_rtl of neo430_top is
     wdata : std_ulogic_vector(15 downto 0);
   end record;
 
-  -- main cpu communication bus --
+  -- main CPU communication bus --
   signal cpu_bus  : cpu_bus_t;
   signal io_acc   : std_ulogic;
-  signal io_wr_en : std_ulogic_vector(01 downto 0);
+  signal io_wr_en : std_ulogic;
   signal io_rd_en : std_ulogic;
 
-  -- read-back data busses --
+  -- read-back data buses --
   signal rom_rdata       : std_ulogic_vector(15 downto 0);
   signal ram_rdata       : std_ulogic_vector(15 downto 0);
   signal muldiv_rdata    : std_ulogic_vector(15 downto 0);
@@ -132,44 +158,59 @@ architecture neo430_top_rtl of neo430_top is
   signal boot_rdata      : std_ulogic_vector(15 downto 0);
   signal wdt_rdata       : std_ulogic_vector(15 downto 0);
   signal timer_rdata     : std_ulogic_vector(15 downto 0);
-  signal usart_rdata     : std_ulogic_vector(15 downto 0);
+  signal uart_rdata      : std_ulogic_vector(15 downto 0);
+  signal spi_rdata       : std_ulogic_vector(15 downto 0);
   signal gpio_rdata      : std_ulogic_vector(15 downto 0);
+  signal crc_rdata       : std_ulogic_vector(15 downto 0);
+  signal cfu_rdata       : std_ulogic_vector(15 downto 0);
+  signal pwm_rdata       : std_ulogic_vector(15 downto 0);
+  signal twi_rdata       : std_ulogic_vector(15 downto 0);
+  signal trng_rdata      : std_ulogic_vector(15 downto 0);
+  signal exirq_rdata     : std_ulogic_vector(15 downto 0);
   signal sysconfig_rdata : std_ulogic_vector(15 downto 0);
 
   -- interrupt system --
-  signal irq       : std_ulogic_vector(03 downto 0);
-  signal irq_ack   : std_ulogic_vector(03 downto 0);
-  signal timer_irq : std_ulogic;
-  signal usart_irq : std_ulogic;
-  signal gpio_irq  : std_ulogic;
-  signal xirq_sync : std_ulogic;
+  signal irq         : std_ulogic_vector(03 downto 0);
+  signal irq_ack     : std_ulogic_vector(03 downto 0);
+  signal timer_irq   : std_ulogic;
+  signal uart_irq    : std_ulogic;
+  signal spi_irq     : std_ulogic;
+  signal twi_irq     : std_ulogic;
+  signal gpio_irq    : std_ulogic;
+  signal xirq_sync0  : std_ulogic;
+  signal xirq_sync1  : std_ulogic;
+  signal ext_irq     : std_ulogic;
 
   -- misc --
   signal imem_up_en : std_ulogic;
+  signal gpio_pwm   : std_ulogic;
 
 begin
 
   -- Reset Generator ----------------------------------------------------------
   -- -----------------------------------------------------------------------------
-  reset_generator: process(rst_i, clk_i)
+  -- make sure the external reset is free of metastability and has a minimal duration of 1 clock cycle
+  reset_generator_filter: process(clk_i)
   begin
-    if (rst_i = '0') then
-      rst_gen <= (others => '0');
-    elsif rising_edge(clk_i) then
-      rst_gen <= rst_gen(rst_gen'left-1 downto 0) & '1';
+    if rising_edge(clk_i) then
+      rst_i_sync0 <= rst_i;
+      rst_i_sync1 <= rst_i_sync0; -- no metastability, thanks
+    end if;
+  end process reset_generator_filter;
+
+  -- keep internal reset active for at least 4 clock cycles
+  reset_generator: process(rst_i_sync1, clk_i)
+  begin
+    if rising_edge(clk_i) then
+      if (rst_i_sync1 = '0') then
+        rst_gen <= (others => '0');
+      else
+        rst_gen <= rst_gen(rst_gen'left-1 downto 0) & '1';
+      end if;
     end if;
   end process reset_generator;
 
-  -- one extra sync ff to prevent weird glitches on the reset net
-  -- and another one to avoid metastability
-  reset_generator_sync_ff: process(clk_i)
-  begin
-    if rising_edge(clk_i) then
-      rst_gen_sync <= rst_gen_sync(0) & rst_gen(rst_gen'left);
-    end if;
-  end process reset_generator_sync_ff;
-
-  ext_rst <= rst_gen_sync(1);
+  ext_rst <= rst_gen(rst_gen'left); -- the beautified external reset signal
   sys_rst <= ext_rst and wdt_rst;
 
 
@@ -180,29 +221,36 @@ begin
     if (sys_rst = '0') then
       clk_div <= (others => '0');
     elsif rising_edge(clk_i) then
-      if ((timer_cg_en or usart_cg_en or wdt_cg_en) = '1') then
+      if ((timer_cg_en or uart_cg_en or spi_cg_en or wdt_cg_en or pwm_cg_en or twi_cg_en) = '1') then -- anybody needing clocks?
         clk_div <= std_ulogic_vector(unsigned(clk_div) + 1);
       end if;
     end if;
   end process clock_generator;
 
-  -- clock select --
-  clk_gen(0) <= clk_div(0);  -- CLK/2
-  clk_gen(1) <= clk_div(1);  -- CLK/4
-  clk_gen(2) <= clk_div(2);  -- CLK/8
-  clk_gen(3) <= clk_div(5);  -- CLK/64
-  clk_gen(4) <= clk_div(6);  -- CLK/128
-  clk_gen(5) <= clk_div(9);  -- CLK/1024
-  clk_gen(6) <= clk_div(10); -- CLK/2048
-  clk_gen(7) <= clk_div(11); -- CLK/4096
+  clock_generator_buf: process(clk_i)
+  begin
+    if rising_edge(clk_i) then
+      clk_div_ff <= clk_div;
+    end if;
+  end process clock_generator_buf;
+
+  -- clock enable select - rising edge detectors --
+  clk_gen(clk_div2_c)    <= clk_div(0)  and (not clk_div_ff(0));  -- CLK/2
+  clk_gen(clk_div4_c)    <= clk_div(1)  and (not clk_div_ff(1));  -- CLK/4
+  clk_gen(clk_div8_c)    <= clk_div(2)  and (not clk_div_ff(2));  -- CLK/8
+  clk_gen(clk_div64_c)   <= clk_div(5)  and (not clk_div_ff(5));  -- CLK/64
+  clk_gen(clk_div128_c)  <= clk_div(6)  and (not clk_div_ff(6));  -- CLK/128
+  clk_gen(clk_div1024_c) <= clk_div(9)  and (not clk_div_ff(9));  -- CLK/1024
+  clk_gen(clk_div2048_c) <= clk_div(10) and (not clk_div_ff(10)); -- CLK/2048
+  clk_gen(clk_div4096_c) <= clk_div(11) and (not clk_div_ff(11)); -- CLK/4096
 
 
-  -- CPU ----------------------------------------------------------------------
+  -- The core of the problem: The CPU -----------------------------------------
   -- -----------------------------------------------------------------------------
   neo430_cpu_inst: neo430_cpu
   generic map (
-    DADD_USE   => DADD_USE,         -- implement DADD instruction? (default=true)
-    BOOTLD_USE => BOOTLD_USE        -- implement and use bootloader? (default=true)
+    BOOTLD_USE  => BOOTLD_USE,      -- implement and use bootloader? (default=true)
+    IMEM_AS_ROM => IMEM_AS_ROM      -- implement IMEM as read-only memory?
   )
   port map (
     -- global control --
@@ -221,26 +269,16 @@ begin
   );
 
   -- final CPU read data --
-  cpu_bus.rdata <= rom_rdata or ram_rdata or boot_rdata or muldiv_rdata or wb_rdata or
-                   usart_rdata or gpio_rdata or timer_rdata or wdt_rdata or sysconfig_rdata;
+  cpu_bus.rdata <= rom_rdata or ram_rdata or boot_rdata or muldiv_rdata or
+                   wb_rdata or uart_rdata or spi_rdata or gpio_rdata or
+                   timer_rdata or wdt_rdata or sysconfig_rdata or crc_rdata or
+                   cfu_rdata or pwm_rdata or twi_rdata or trng_rdata or exirq_rdata;
 
-  -- sync for external IRQ --
-  external_irq_sync: process(clk_i)
-  begin
-    if rising_edge(clk_i) then
-      xirq_sync <= irq_i;
-    end if;
-  end process external_irq_sync;
-
-  -- interrupt priority assignment --
-  irq(0) <= timer_irq; -- timer match (highest priority)
-  irq(1) <= usart_irq; -- UART Rx available | UART Tx done | SPI RTX done
-  irq(2) <= gpio_irq;  -- GPIO input pin change
-  irq(3) <= xirq_sync; -- external interrupt request (lowest priority)
-
-  -- external interrupt acknowledge --
-  irq_ack_o <= irq_ack(3);
-  --- the internal irq sources DO NOT REQUIRE an acknowledge!
+  -- interrupts: priority assignment --
+  irq(0) <= timer_irq;                      -- timer match (highest priority)
+  irq(1) <= uart_irq or spi_irq or twi_irq; -- serial IRQ
+  irq(2) <= gpio_irq;                       -- GPIO input pin change
+  irq(3) <= ext_irq;                        -- external interrupt request (lowest priority)
 
 
   -- Main Memory (ROM/IMEM & RAM/DMEM) ----------------------------------------
@@ -296,12 +334,12 @@ begin
 
   -- IO Access? ---------------------------------------------------------------
   -- -----------------------------------------------------------------------------
-  io_acc   <= '1' when (cpu_bus.addr(15 downto index_size(io_size_c)) = io_base_c(15 downto index_size(io_size_c))) else '0';
-  io_rd_en <= cpu_bus.rd_en when (io_acc = '1') else '0';
-  io_wr_en <= cpu_bus.wr_en when (io_acc = '1') else "00";
+  io_acc   <= '1' when (cpu_bus.addr(15 downto index_size_f(io_size_c)) = io_base_c(15 downto index_size_f(io_size_c))) else '0';
+  io_rd_en <= cpu_bus.rd_en and io_acc;
+  io_wr_en <= (cpu_bus.wr_en(0) or cpu_bus.wr_en(1)) and io_acc; -- use all accesses as full-word accesses
 
 
-  -- Multiplier/Divider Unit --------------------------------------------------
+  -- Multiplier/Divider Unit (MULDIV) -----------------------------------------
   -- -----------------------------------------------------------------------------
   neo430_muldiv_inst_true:
   if (MULDIV_USE = true) generate
@@ -323,7 +361,7 @@ begin
   end generate;
 
 
-  -- Wishbone Adapter ---------------------------------------------------------
+  -- Wishbone Adapter (WB32) --------------------------------------------------
   -- -----------------------------------------------------------------------------
   neo430_wb32_if_inst_true:
   if (WB32_USE = true) generate
@@ -360,11 +398,11 @@ begin
   end generate;
 
 
-  -- USART --------------------------------------------------------------------
+  -- Universal Asynchronous Receiver & Transmitter (UART) ---------------------
   -- -----------------------------------------------------------------------------
-  neo430_usart_inst_true:
-  if (USART_USE = true) generate
-    neo430_usart_inst: neo430_usart
+  neo430_uart_inst_true:
+  if (UART_USE = true) generate
+    neo430_uart_inst: neo430_uart
     port map (
       -- host access --
       clk_i       => clk_i,         -- global clock line
@@ -372,52 +410,84 @@ begin
       wren_i      => io_wr_en,      -- write enable
       addr_i      => cpu_bus.addr,  -- address
       data_i      => cpu_bus.wdata, -- data in
-      data_o      => usart_rdata,   -- data out
+      data_o      => uart_rdata,    -- data out
       -- clock generator --
-      clkgen_en_o => usart_cg_en,   -- enable clock generator
+      clkgen_en_o => uart_cg_en,    -- enable clock generator
       clkgen_i    => clk_gen,
       -- com lines --
       uart_txd_o  => uart_txd_o,
       uart_rxd_i  => uart_rxd_i,
+      -- interrupts --
+      uart_irq_o  => uart_irq       -- uart rx/tx interrupt
+    );
+  end generate;
+
+  neo430_uart_inst_false:
+  if (UART_USE = false) generate
+    uart_rdata <= (others => '0');
+    uart_irq   <= '0';
+    uart_cg_en <= '0';
+    uart_txd_o <= '1';
+  end generate;
+
+
+  -- Serial Peripheral Interface (SPI) ----------------------------------------
+  -- -----------------------------------------------------------------------------
+  neo430_spi_inst_true:
+  if (SPI_USE = true) generate
+    neo430_spi_inst: neo430_spi
+    port map (
+      -- host access --
+      clk_i       => clk_i,         -- global clock line
+      rden_i      => io_rd_en,      -- read enable
+      wren_i      => io_wr_en,      -- write enable
+      addr_i      => cpu_bus.addr,  -- address
+      data_i      => cpu_bus.wdata, -- data in
+      data_o      => spi_rdata,     -- data out
+      -- clock generator --
+      clkgen_en_o => spi_cg_en,     -- enable clock generator
+      clkgen_i    => clk_gen,
+      -- com lines --
       spi_sclk_o  => spi_sclk_o,    -- SPI serial clock
       spi_mosi_o  => spi_mosi_o,    -- SPI master out, slave in
       spi_miso_i  => spi_miso_i,    -- SPI master in, slave out
       spi_cs_o    => spi_cs_o,      -- SPI CS 0..5
-      -- interrupts --
-      usart_irq_o => usart_irq      -- spi transmission done / uart rx/tx interrupt
+      -- interrupt --
+      spi_irq_o   => spi_irq        -- transmission done interrupt
     );
   end generate;
 
-  neo430_usart_inst_false:
-  if (USART_USE = false) generate
-    usart_rdata <= (others => '0');
-    usart_irq   <= '0';
-    usart_cg_en <= '0';
-    uart_txd_o  <= '1';
-    spi_sclk_o  <= '0';
-    spi_mosi_o  <= '0';
-    spi_cs_o    <= (others => '1');
+  neo430_spi_inst_false:
+  if (SPI_USE = false) generate
+    spi_rdata  <= (others => '0');
+    spi_cg_en  <= '0';
+    spi_sclk_o <= '0';
+    spi_mosi_o <= '0';
+    spi_cs_o   <= (others => '1');
+    spi_irq    <= '0';
   end generate;
 
 
-  -- Parallel IO --------------------------------------------------------------
+  -- General Purpose Parallel IO (GPIO) ---------------------------------------
   -- -----------------------------------------------------------------------------
   neo430_gpio_inst_true:
   if (GPIO_USE = true) generate
     neo430_gpio_inst: neo430_gpio
     port map (
       -- host access --
-      clk_i  => clk_i,              -- global clock line
-      rden_i => io_rd_en,           -- read enable
-      wren_i => io_wr_en,           -- write enable
-      addr_i => cpu_bus.addr,       -- address
-      data_i => cpu_bus.wdata,      -- data in
-      data_o => gpio_rdata,         -- data out
+      clk_i      => clk_i,          -- global clock line
+      rden_i     => io_rd_en,       -- read enable
+      wren_i     => io_wr_en,       -- write enable
+      addr_i     => cpu_bus.addr,   -- address
+      data_i     => cpu_bus.wdata,  -- data in
+      data_o     => gpio_rdata,     -- data out
       -- parallel io --
-      gpio_o => gpio_o,
-      gpio_i => gpio_i,
+      gpio_o     => gpio_o,
+      gpio_i     => gpio_i,
+     -- GPIO PWM --
+      gpio_pwm_i => gpio_pwm,
       -- interrupt --
-      irq_o  => gpio_irq            -- pin-cahnge interrupt
+      irq_o      => gpio_irq        -- pin-change interrupt
     );
   end generate;
 
@@ -429,7 +499,7 @@ begin
   end generate;
 
 
-  -- High Precision Timer -----------------------------------------------------
+  -- High Precision Timer (TIMER) ---------------------------------------------
   -- -----------------------------------------------------------------------------
   neo430_timer_inst_true:
   if (TIMER_USE = true) generate
@@ -458,7 +528,7 @@ begin
   end generate;
 
 
-  -- Watchdog Timer -----------------------------------------------------------
+  -- Watchdog Timer (WDT) -----------------------------------------------------
   -- -----------------------------------------------------------------------------
   neo430_wdt_inst_true:
   if (WDT_USE = true) generate
@@ -488,6 +558,177 @@ begin
   end generate;
 
 
+  -- Checksum Module (CRC) ----------------------------------------------------
+  -- -----------------------------------------------------------------------------
+  neo430_crc_inst_true:
+  if (CRC_USE = true) generate
+    neo430_crc_inst: neo430_crc
+    port map(
+      -- host access --
+      clk_i  => clk_i,              -- global clock line
+      rden_i => io_rd_en,           -- read enable
+      wren_i => io_wr_en,           -- write enable
+      addr_i => cpu_bus.addr,       -- address
+      data_i => cpu_bus.wdata,      -- data in
+      data_o => crc_rdata           -- data out
+    );
+  end generate;
+
+  neo430_crc_inst_false:
+  if (CRC_USE = false) generate
+    crc_rdata <= (others => '0');
+  end generate;
+
+
+  -- Custom Functions Unit (CFU) ----------------------------------------------
+  -- -----------------------------------------------------------------------------
+  neo430_cfu_inst_true:
+  if (CFU_USE = true) generate
+    neo430_cfu_inst: neo430_cfu
+    port map(
+      -- host access --
+      clk_i  => clk_i,              -- global clock line
+      rden_i => io_rd_en,           -- read enable
+      wren_i => io_wr_en,           -- write enable
+      addr_i => cpu_bus.addr,       -- address
+      data_i => cpu_bus.wdata,      -- data in
+      data_o => cfu_rdata           -- data out
+      -- add custom IOs below --
+    );
+  end generate;
+
+  neo430_cfu_inst_false:
+  if (CFU_USE = false) generate
+    cfu_rdata <= (others => '0');
+  end generate;
+
+
+  -- PWM Controller (PWM) -----------------------------------------------------
+  -- -----------------------------------------------------------------------------
+  neo430_pwm_inst_true:
+  if (PWM_USE = true) generate
+    neo430_pwm_inst: neo430_pwm
+    port map(
+      -- host access --
+      clk_i       => clk_i,         -- global clock line
+      rden_i      => io_rd_en,      -- read enable
+      wren_i      => io_wr_en,      -- write enable
+      addr_i      => cpu_bus.addr,  -- address
+      data_i      => cpu_bus.wdata, -- data in
+      data_o      => pwm_rdata,     -- data out
+      -- clock generator --
+      clkgen_en_o => pwm_cg_en,     -- enable clock generator
+      clkgen_i    => clk_gen,
+      -- GPIO output PWM --
+      gpio_pwm_o  => gpio_pwm,
+      -- pwm output channels --
+      pwm_o       => pwm_o
+    );
+  end generate;
+
+  neo430_pwm_inst_false:
+  if (PWM_USE = false) generate
+    pwm_cg_en <= '0';
+    gpio_pwm  <= '1';
+    pwm_rdata <= (others => '0');
+    pwm_o     <= (others => '0');
+  end generate;
+
+
+  -- Two Wire Serial Interface (SPI) ------------------------------------------
+  -- -----------------------------------------------------------------------------
+  neo430_twi_inst_true:
+  if (TWI_USE = true) generate
+    neo430_twi_inst: neo430_twi
+    port map (
+      -- host access --
+      clk_i       => clk_i,         -- global clock line
+      rden_i      => io_rd_en,      -- read enable
+      wren_i      => io_wr_en,      -- write enable
+      addr_i      => cpu_bus.addr,  -- address
+      data_i      => cpu_bus.wdata, -- data in
+      data_o      => twi_rdata,     -- data out
+      -- clock generator --
+      clkgen_en_o => twi_cg_en,     -- enable clock generator
+      clkgen_i    => clk_gen,
+      -- com lines --
+      twi_sda_io  => twi_sda_io,    -- serial data line
+      twi_scl_io  => twi_scl_io,    -- serial clock line
+      -- interrupt --
+      twi_irq_o   => twi_irq        -- transfer done IRQ
+    );
+  end generate;
+
+  neo430_twi_inst_false:
+  if (TWI_USE = false) generate
+    twi_cg_en <= '0';
+    twi_rdata <= (others => '0');
+    twi_irq   <= '0';
+  end generate;
+
+
+  -- True Random Number Generator (TRNG) --------------------------------------
+  -- -----------------------------------------------------------------------------
+  neo430_trng_inst_true:
+  if (TRNG_USE = true) generate
+    neo430_trng_inst: neo430_trng
+    port map (
+      -- host access --
+      clk_i       => clk_i,         -- global clock line
+      rden_i      => io_rd_en,      -- read enable
+      wren_i      => io_wr_en,      -- write enable
+      addr_i      => cpu_bus.addr,  -- address
+      data_i      => cpu_bus.wdata, -- data in
+      data_o      => trng_rdata     -- data out
+    );
+  end generate;
+
+  neo430_trng_inst_false:
+  if (TRNG_USE = false) generate
+    trng_rdata <= (others => '0');
+  end generate;
+
+
+  -- External Interrupts Controller (EXIRQ) -----------------------------------
+  -- -----------------------------------------------------------------------------
+  neo430_exirq_inst_true:
+  if (EXIRQ_USE = true) generate
+    neo430_exirq_inst: neo430_exirq
+    port map (
+      -- host access --
+      clk_i     => clk_i,           -- global clock line
+      rden_i    => io_rd_en,        -- read enable
+      wren_i    => io_wr_en,        -- write enable
+      addr_i    => cpu_bus.addr,    -- address
+      data_i    => cpu_bus.wdata,   -- data in
+      data_o    => exirq_rdata,     -- data out
+      -- cpu interrupt --
+      cpu_irq_o => ext_irq,
+      -- external interrupt lines --
+      ext_irq_i => ext_irq_i,       -- IRQ
+      ext_ack_o => ext_ack_o        -- acknowledge
+    );
+  end generate;
+
+  neo430_exirq_inst_false:
+  if (EXIRQ_USE = false) generate
+    exirq_rdata <= (others => '0');
+    ext_ack_o   <= "0000000" & irq_ack(3);
+    ext_irq     <= xirq_sync1;
+  end generate;
+
+  -- sync for single external IRQ if EXIRQ is not implemented --
+  external_irq_sync: process(clk_i)
+  begin
+    if rising_edge(clk_i) then
+      if (EXIRQ_USE = false) then
+        xirq_sync0 <= ext_irq_i(0);
+        xirq_sync1 <= xirq_sync0;
+      end if;
+    end if;
+  end process external_irq_sync;
+
+
   -- System Configuration -----------------------------------------------------
   -- -----------------------------------------------------------------------------
   neo430_sysconfig_inst: neo430_sysconfig
@@ -499,13 +740,19 @@ begin
     -- additional configuration --
     USER_CODE   => USER_CODE,       -- custom user code
     -- module configuration --
-    DADD_USE    => DADD_USE,        -- implement DADD instruction?
-    MULDIV_USE  => MULDIV_USE,      -- implementcustom multiplier/divider unit?
+    MULDIV_USE  => MULDIV_USE,      -- implement multiplier/divider unit?
     WB32_USE    => WB32_USE,        -- implement WB32 unit?
     WDT_USE     => WDT_USE,         -- implement WDT?
     GPIO_USE    => GPIO_USE,        -- implement GPIO unit?
     TIMER_USE   => TIMER_USE,       -- implement timer?
-    USART_USE   => USART_USE,       -- implement USART?
+    UART_USE    => UART_USE,        -- implement UART?
+    CRC_USE     => CRC_USE,         -- implement CRC unit?
+    CFU_USE     => CFU_USE,         -- implement CFU?
+    PWM_USE     => PWM_USE,         -- implement PWM?
+    TWI_USE     => TWI_USE,         -- implement TWI?
+    SPI_USE     => SPI_USE,         -- implement SPI?
+    TRNG_USE    => TRNG_USE,        -- implement TRNG?
+    EXIRQ_USE   => EXIRQ_USE,       -- implement EXIRQ?
     -- boot configuration --
     BOOTLD_USE  => BOOTLD_USE,      -- implement and use bootloader?
     IMEM_AS_ROM => IMEM_AS_ROM      -- implement IMEM as read-only memory?

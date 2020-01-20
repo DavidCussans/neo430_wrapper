@@ -19,7 +19,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               27.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 10.12.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -30,39 +30,50 @@ package neo430_package is
 
   -- Processor Hardware Version -------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  constant hw_version_c : std_ulogic_vector(15 downto 0) := x"0143"; -- no touchy!
+  constant hw_version_c : std_ulogic_vector(15 downto 0) := x"0322"; -- no touchy!
+
+  -- Advanced Hardware Configuration --------------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  constant use_dsp_mul_c    : boolean := false; -- use DSP blocks for MULDIV's multiplication core (default=false)
+  constant use_dadd_cmd_c   : boolean := false; -- implement CPU's DADD instruction (default=false)
+  constant use_xalu_c       : boolean := false; -- implement extended ALU function (default=false)
+  constant low_power_mode_c : boolean := false; -- can reduce switching activity, but will also decrease f_max and might increase area (default=false)
+  constant awesome_mode_c   : boolean := true;  -- of course! (default=true)
 
   -- Internal Functions ---------------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function index_size(input : natural) return natural;
-  function is_power_of_two(num : natural; bit_width : natural) return boolean;
-  function bit_reversal(input : std_ulogic_vector) return std_ulogic_vector;
-  function set_bits(input : std_ulogic_vector) return natural;
-  function leading_zeros(input : std_ulogic_vector) return natural;
-  function cond_sel_natural(cond : boolean; val_t : natural; val_f : natural) return natural;
-  function cond_sel_stdulogicvector(cond : boolean; val_t : std_ulogic_vector; val_f : std_ulogic_vector) return std_ulogic_vector;
-  function bool_to_ulogic(cond : boolean) return std_ulogic;
-  function bin_to_gray(input : std_ulogic_vector) return std_ulogic_vector;
-  function gray_to_bin(input : std_ulogic_vector) return std_ulogic_vector;
-  function int_to_hexchar(input : integer) return character;
-  function bcd_add4(a : std_ulogic_vector; b : std_ulogic_vector; c : std_ulogic) return std_ulogic_vector;
+  function index_size_f(input : natural) return natural;
+  function is_power_of_two_f(num : natural; bit_width : natural) return boolean;
+  function bit_reversal_f(input : std_ulogic_vector) return std_ulogic_vector;
+  function set_bits_f(input : std_ulogic_vector) return natural;
+  function leading_zeros_f(input : std_ulogic_vector) return natural;
+  function cond_sel_natural_f(cond : boolean; val_t : natural; val_f : natural) return natural;
+  function cond_sel_stdulogicvector_f(cond : boolean; val_t : std_ulogic_vector; val_f : std_ulogic_vector) return std_ulogic_vector;
+  function bool_to_ulogic_f(cond : boolean) return std_ulogic;
+  function bin_to_gray_f(input : std_ulogic_vector) return std_ulogic_vector;
+  function gray_to_bin_f(input : std_ulogic_vector) return std_ulogic_vector;
+  function int_to_hexchar_f(input : integer) return character;
+  function bcd_add4_f(a : std_ulogic_vector; b : std_ulogic_vector; c : std_ulogic) return std_ulogic_vector;
+  function or_all_f(a : std_ulogic_vector) return std_ulogic;
+  function and_all_f(a : std_ulogic_vector) return std_ulogic;
+  function xor_all_f(a : std_ulogic_vector) return std_ulogic;
 
-  -- Address Space Layout -------------------------------------------------------------------
+  -- Address Space Layout (make sure this is always sync with neo430.h) ---------------------
   -- -------------------------------------------------------------------------------------------
 
   -- Main Memory: IMEM(ROM/RAM) --
   constant imem_base_c : std_ulogic_vector(15 downto 0) := x"0000"; -- base address, fixed!
 
   -- Main Memory: DMEM(RAM) --
-  constant dmem_base_c : std_ulogic_vector(15 downto 0) := x"8000"; -- base address, fixed for now!
+  constant dmem_base_c : std_ulogic_vector(15 downto 0) := x"C000"; -- base address, fixed!
 
   -- Boot ROM --
   constant boot_base_c : std_ulogic_vector(15 downto 0) := x"F000"; -- bootloader base address, fixed!
   constant boot_size_c : natural := 2048; -- bytes, max 2048 bytes!
 
   -- IO: Peripheral Devices ("IO") Area --
-  -- Each internal IO device (except sysconfig) must not use more than 16 bytes address space!
-  -- CONTROL register (including the device enable) must be located at the base address of the device!
+  -- Each device must use 2 bytes or a multiple of 2 bytes as address space!
+  -- CONTROL register(s) (including the device enable) must be located at the base address of the device!
   constant io_base_c : std_ulogic_vector(15 downto 0) := x"FF80";
   constant io_size_c : natural := 128; -- bytes, fixed!
 
@@ -70,16 +81,16 @@ package neo430_package is
   constant muldiv_base_c : std_ulogic_vector(15 downto 0) := x"FF80";
   constant muldiv_size_c : natural := 16; -- bytes
 
-  constant muldiv_opa_addr_c      : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0000");
-  constant muldiv_opb_div_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0002");
-  constant muldiv_opb_mul_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0004");
---constant reserved               : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0006");
---constant reserved               : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0008");
---constant reserved               : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"000A");
-  constant muldiv_resx_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"000C");
-  constant muldiv_resy_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"000E");
+  constant muldiv_opa_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0000");
+  constant muldiv_opb_div_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0002");
+  constant muldiv_opb_mul_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0004");
+--constant muldiv_???_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0006");
+--constant muldiv_???_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"0008");
+--constant muldiv_???_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"000A");
+  constant muldiv_resx_addr_c    : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"000C");
+  constant muldiv_resy_addr_c    : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(muldiv_base_c) + x"000E");
 
-  -- IO: Wishbone32 Interface --
+  -- IO: Wishbone32 Interface (WB32) --
   constant wb32_base_c : std_ulogic_vector(15 downto 0) := x"FF90";
   constant wb32_size_c : natural := 16; -- bytes
 
@@ -90,44 +101,114 @@ package neo430_package is
   constant wb32_wr_adr_hi_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(wb32_base_c) + x"0008");
   constant wb32_data_lo_addr_c   : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(wb32_base_c) + x"000A");
   constant wb32_data_hi_addr_c   : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(wb32_base_c) + x"000C");
---constant reserved              : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(wb32_base_c) + x"000E");
+--constant wb32_???_addr_c       : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(wb32_base_c) + x"000E");
 
-  -- IO: USART --
-  constant usart_base_c : std_ulogic_vector(15 downto 0) := x"FFA0";
-  constant usart_size_c : natural := 8; -- bytes
+  -- IO: Universal asynchronous receiver and transmitter (UART) --
+  constant uart_base_c : std_ulogic_vector(15 downto 0) := x"FFA0";
+  constant uart_size_c : natural := 4; -- bytes
 
-  constant usart_ctrl_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(usart_base_c) + x"0000");
-  constant usart_spi_rtx_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(usart_base_c) + x"0002");
-  constant usart_uart_rtx_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(usart_base_c) + x"0004");
-  constant usart_baud_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(usart_base_c) + x"0006");
+  constant uart_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(uart_base_c) + x"0000");
+  constant uart_rtx_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(uart_base_c) + x"0002");
 
-  -- IO: GPIO  --
-  constant gpio_base_c : std_ulogic_vector(15 downto 0) := x"FFB0";
+  -- IO: Serial Peripheral Interface (SPI) --
+  constant spi_base_c : std_ulogic_vector(15 downto 0) := x"FFA4";
+  constant spi_size_c : natural := 4; -- bytes
+
+  constant spi_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(spi_base_c) + x"0000");
+  constant spi_rtx_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(spi_base_c) + x"0002");
+
+  -- IO: General purpose input/output port (GPIO)  --
+  constant gpio_base_c : std_ulogic_vector(15 downto 0) := x"FFA8";
   constant gpio_size_c : natural := 8; -- bytes
 
-  constant gpio_ctrl_addr_c    : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0000");
-  constant gpio_in_addr_c      : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0002");
-  constant gpio_out_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0004");
-  constant gpio_irqmask_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0006");
+--constant gpio_???_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0000");
+  constant gpio_irqmask_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0002");
+  constant gpio_in_addr_c      : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0004");
+  constant gpio_out_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(gpio_base_c) + x"0006");
 
-  -- IO: High-Precision Timer --
-  constant timer_base_c : std_ulogic_vector(15 downto 0) := x"FFC0";
+  -- IO: High-Precision Timer (TIMER) --
+  constant timer_base_c : std_ulogic_vector(15 downto 0) := x"FFB0";
   constant timer_size_c : natural := 8; -- bytes
 
   constant timer_ctrl_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(timer_base_c) + x"0000");
   constant timer_cnt_addr_c   : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(timer_base_c) + x"0002");
   constant timer_thres_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(timer_base_c) + x"0004");
---constant reserved           : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(timer_base_c) + x"0008");
+--constant timer_???_addr_c   : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(timer_base_c) + x"0006");
 
-  -- IO: Watchdog Timer --
-  constant wdt_base_c : std_ulogic_vector(15 downto 0) := x"FFD0";
+  -- IO: Watchdog Timer (WDT) --
+  constant wdt_base_c : std_ulogic_vector(15 downto 0) := x"FFB8";
   constant wdt_size_c : natural := 2; -- bytes
 
-  constant WDT_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(wdt_base_c) + x"0000");
+  constant wdt_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(wdt_base_c) + x"0000");
 
-  -- IO: System Configuration --
-  constant sysconfig_base_c : std_ulogic_vector(15 downto 0) := x"FFE0";
-  constant sysconfig_size_c : natural := 32; -- bytes
+  -- IO: Cyclic Redundancy Check (CRC) --
+  constant crc_base_c : std_ulogic_vector(15 downto 0) := x"FFC0";
+  constant crc_size_c : natural := 16; -- bytes
+
+  constant crc_poly_lo_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"0000");
+  constant crc_poly_hi_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"0002");
+  constant crc_crc16_in_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"0004");
+  constant crc_crc32_in_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"0006");
+--constant crc_???_addr_c      : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"0008");
+--constant crc_???_addr_c      : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"000A");
+  constant crc_resx_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"000C");
+  constant crc_resy_addr_c     : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(crc_base_c) + x"000E");
+
+  -- IO: Custom Functions Unit (CFU) --
+  constant cfu_base_c : std_ulogic_vector(15 downto 0) := x"FFD0";
+  constant cfu_size_c : natural := 16; -- bytes
+
+  constant cfu_reg0_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"0000");
+  constant cfu_reg1_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"0002");
+  constant cfu_reg2_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"0004");
+  constant cfu_reg3_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"0006");
+  constant cfu_reg4_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"0008");
+  constant cfu_reg5_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"000A");
+  constant cfu_reg6_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"000C");
+  constant cfu_reg7_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(cfu_base_c) + x"000E");
+
+  -- IO: Pulse-Width Modulation Controller (PWM) --
+  constant pwm_base_c : std_ulogic_vector(15 downto 0) := x"FFE0";
+  constant pwm_size_c : natural := 8; -- bytes
+
+  constant pwm_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(pwm_base_c) + x"0000");
+  constant pwm_ch10_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(pwm_base_c) + x"0002");
+  constant pwm_ch32_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(pwm_base_c) + x"0004");
+--constant pwm_???_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(pwm_base_c) + x"0006");
+
+  -- IO: Two Wire Serial Interface (TWI) --
+  constant twi_base_c : std_ulogic_vector(15 downto 0) := x"FFE8";
+  constant twi_size_c : natural := 4; -- bytes
+
+  constant twi_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(twi_base_c) + x"0000");
+  constant twi_rtx_addr_c  : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(twi_base_c) + x"0002");
+
+  -- IO: True Random Number Generator (TRNG) --
+  constant trng_base_c : std_ulogic_vector(15 downto 0) := x"FFEC";
+  constant trng_size_c : natural := 2; -- bytes
+
+  constant trng_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(trng_base_c) + x"0000");
+
+  -- IO: External Interrupts Controller (EXIRQ) --
+  constant exirq_base_c : std_ulogic_vector(15 downto 0) := x"FFEE";
+  constant exirq_size_c : natural := 2; -- bytes
+
+  constant exirq_ctrl_addr_c : std_ulogic_vector(15 downto 0) := std_ulogic_vector(unsigned(exirq_base_c) + x"0000");
+
+  -- IO: System Configuration (SYSCONFIG) --
+  constant sysconfig_base_c : std_ulogic_vector(15 downto 0) := x"FFF0";
+  constant sysconfig_size_c : natural := 16; -- bytes
+
+  -- Clock Generator -------------------------------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  constant clk_div2_c    : natural := 0;
+  constant clk_div4_c    : natural := 1;
+  constant clk_div8_c    : natural := 2;
+  constant clk_div64_c   : natural := 3;
+  constant clk_div128_c  : natural := 4;
+  constant clk_div1024_c : natural := 5;
+  constant clk_div2048_c : natural := 6;
+  constant clk_div4096_c : natural := 7;
 
   -- Register Addresses ---------------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
@@ -143,6 +224,7 @@ package neo430_package is
   constant sreg_n_c : natural := 2;  -- r/w: negative flag
   constant sreg_i_c : natural := 3;  -- r/w: global interrupt enable
   constant sreg_s_c : natural := 4;  -- r/w: CPU sleep flag
+  constant sreg_p_c : natural := 5;  -- r/w: parity flag
   constant sreg_v_c : natural := 8;  -- r/w: overflow flag
   constant sreg_q_c : natural := 14; -- -/w: clear pending IRQ buffer when set
   constant sreg_r_c : natural := 15; -- r/w: enable write access to IMEM (ROM) when set
@@ -153,6 +235,7 @@ package neo430_package is
   constant flag_z_c : natural := 1; -- zero flag
   constant flag_n_c : natural := 2; -- negative flag
   constant flag_v_c : natural := 3; -- overflow flag
+  constant flag_p_c : natural := 4; -- parity flag
 
   -- Main Control Bus -----------------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
@@ -168,29 +251,30 @@ package neo430_package is
   constant ctrl_rf_fup_c      : natural :=  8; -- update ALU flags
   constant ctrl_rf_wb_en_c    : natural :=  9; -- enable RF write back
   constant ctrl_rf_dsleep_c   : natural := 10; -- disable sleep mode
-  constant ctrl_rf_boot_c     : natural := 11; -- inject PC boot address
+  constant ctrl_rf_dgie_c     : natural := 11; -- disable global interrupt enable
+  constant ctrl_rf_boot_c     : natural := 12; -- inject PC boot address
   -- alu --
-  constant ctrl_alu_in_sel_c  : natural := 12; -- ALU OP input select
-  constant ctrl_alu_opa_wr_c  : natural := 13; -- write ALU operand A
-  constant ctrl_alu_opb_wr_c  : natural := 14; -- write ALU operand B
-  constant ctrl_alu_cmd0_c    : natural := 15; -- ALU command bit 0
-  constant ctrl_alu_cmd1_c    : natural := 16; -- ALU command bit 1
-  constant ctrl_alu_cmd2_c    : natural := 17; -- ALU command bit 2
-  constant ctrl_alu_cmd3_c    : natural := 18; -- ALU command bit 3
-  constant ctrl_alu_bw_c      : natural := 19; -- byte(1)/word(0) operation
+  constant ctrl_alu_in_sel_c  : natural := 13; -- ALU OP input select
+  constant ctrl_alu_opa_wr_c  : natural := 14; -- write ALU operand A
+  constant ctrl_alu_opb_wr_c  : natural := 15; -- write ALU operand B
+  constant ctrl_alu_cmd0_c    : natural := 16; -- ALU command bit 0
+  constant ctrl_alu_cmd1_c    : natural := 17; -- ALU command bit 1
+  constant ctrl_alu_cmd2_c    : natural := 18; -- ALU command bit 2
+  constant ctrl_alu_cmd3_c    : natural := 19; -- ALU command bit 3
+  constant ctrl_alu_bw_c      : natural := 20; -- byte(1)/word(0) operation
   -- address generator --
-  constant ctrl_adr_off0_c    : natural := 20; -- address offset selection bit 0
-  constant ctrl_adr_off1_c    : natural := 21; -- address offset selection bit 1
-  constant ctrl_adr_imm_en_c  : natural := 22; -- select immediate branch input
-  constant ctrl_adr_mar_sel_c : natural := 23; -- select input for MAR
-  constant ctrl_adr_bp_en_c   : natural := 24; -- mem addr output select, 0:MAR, 1:bypass
-  constant ctrl_adr_ivec_oe_c : natural := 25; -- output IRQ if 1, else output PC
-  constant ctrl_adr_mar_wr_c  : natural := 26; -- write MAR
+  constant ctrl_adr_off0_c    : natural := 21; -- address offset selection bit 0
+  constant ctrl_adr_off1_c    : natural := 22; -- address offset selection bit 1
+  constant ctrl_adr_off2_c    : natural := 23; -- address offset selection bit 2
+  constant ctrl_adr_mar_sel_c : natural := 24; -- select input for MAR
+  constant ctrl_adr_bp_en_c   : natural := 25; -- mem addr output select, 0:MAR, 1:bypass
+  constant ctrl_adr_ivec_oe_c : natural := 26; -- output IRQ if 1, else output PC
+  constant ctrl_adr_mar_wr_c  : natural := 27; -- write MAR
   -- memory interface --
-  constant ctrl_mem_wr_c      : natural := 27; -- write to memory
-  constant ctrl_mem_rd_c      : natural := 28; -- read from memory
+  constant ctrl_mem_wr_c      : natural := 28; -- write to memory
+  constant ctrl_mem_rd_c      : natural := 29; -- read from memory
   -- bus size --
-  constant ctrl_width_c       : natural := 29; -- control bus size
+  constant ctrl_width_c       : natural := 30; -- control bus size
 
   -- Condition Codes ------------------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
@@ -215,7 +299,7 @@ package neo430_package is
   constant alu_subc_c : std_ulogic_vector(3 downto 0) := "0111"; -- r <= b - a - 1 + carry
   constant alu_sub_c  : std_ulogic_vector(3 downto 0) := "1000"; -- r <= b - a
   constant alu_cmp_c  : std_ulogic_vector(3 downto 0) := "1001"; -- b - a (no write back)
-  constant alu_dadd_c : std_ulogic_vector(3 downto 0) := "1010"; -- r <= a + b (BCD!)
+  constant alu_dadd_c : std_ulogic_vector(3 downto 0) := "1010"; -- r <= a + b (BCD)
   constant alu_bit_c  : std_ulogic_vector(3 downto 0) := "1011"; -- a & b (no write back)
   constant alu_bic_c  : std_ulogic_vector(3 downto 0) := "1100"; -- r <= !a & b
   constant alu_bis_c  : std_ulogic_vector(3 downto 0) := "1101"; -- r <= a | b
@@ -223,7 +307,7 @@ package neo430_package is
   constant alu_and_c  : std_ulogic_vector(3 downto 0) := "1111"; -- r <= a & b
 
 
-  -- The Core of the Problem: Processor Top Entity ------------------------------------------
+  -- The Core of the Problem: NEO430 Processor Top Entity -----------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_top
     generic (
@@ -234,13 +318,19 @@ package neo430_package is
       -- additional configuration --
       USER_CODE   : std_ulogic_vector(15 downto 0) := x"0000"; -- custom user code
       -- module configuration --
-      DADD_USE    : boolean := true; -- implement DADD instruction? (default=true)
       MULDIV_USE  : boolean := true; -- implement multiplier/divider unit? (default=true)
       WB32_USE    : boolean := true; -- implement WB32 unit? (default=true)
       WDT_USE     : boolean := true; -- implement WDT? (default=true)
       GPIO_USE    : boolean := true; -- implement GPIO unit? (default=true)
       TIMER_USE   : boolean := true; -- implement timer? (default=true)
-      USART_USE   : boolean := true; -- implement USART? (default=true)
+      UART_USE    : boolean := true; -- implement UART? (default=true)
+      CRC_USE     : boolean := true; -- implement CRC unit? (default=true)
+      CFU_USE     : boolean := false; -- implement custom functions unit? (default=false)
+      PWM_USE     : boolean := true; -- implement PWM controller? (default=true)
+      TWI_USE     : boolean := true; -- implement two wire serial interface? (default=true)
+      SPI_USE     : boolean := true; -- implement SPI? (default=true)
+      TRNG_USE    : boolean := false; -- implement TRNG? (default=false)
+      EXIRQ_USE   : boolean := true; -- implement EXIRQ? (default=true)
       -- boot configuration --
       BOOTLD_USE  : boolean := true; -- implement and use bootloader? (default=true)
       IMEM_AS_ROM : boolean := false -- implement IMEM as read-only memory? (default=false)
@@ -252,13 +342,17 @@ package neo430_package is
       -- gpio --
       gpio_o     : out std_ulogic_vector(15 downto 0); -- parallel output
       gpio_i     : in  std_ulogic_vector(15 downto 0); -- parallel input
+      -- pwm channels --
+      pwm_o      : out std_ulogic_vector(03 downto 0); -- pwm channels
       -- serial com --
       uart_txd_o : out std_ulogic; -- UART send data
       uart_rxd_i : in  std_ulogic; -- UART receive data
       spi_sclk_o : out std_ulogic; -- serial clock line
       spi_mosi_o : out std_ulogic; -- serial data line out
       spi_miso_i : in  std_ulogic; -- serial data line in
-      spi_cs_o   : out std_ulogic_vector(05 downto 0); -- SPI CS 0..5
+      spi_cs_o   : out std_ulogic_vector(07 downto 0); -- SPI CS 0..7
+      twi_sda_io : inout std_logic; -- twi serial data line
+      twi_scl_io : inout std_logic; -- twi serial clock line
       -- 32-bit wishbone interface --
       wb_adr_o   : out std_ulogic_vector(31 downto 0); -- address
       wb_dat_i   : in  std_ulogic_vector(31 downto 0); -- read data
@@ -268,29 +362,26 @@ package neo430_package is
       wb_stb_o   : out std_ulogic; -- strobe
       wb_cyc_o   : out std_ulogic; -- valid cycle
       wb_ack_i   : in  std_ulogic; -- transfer acknowledge
-      -- interrupts --
-      irq_i      : in  std_ulogic; -- external interrupt request line
-      irq_ack_o  : out std_ulogic  -- external interrupt request acknowledge
+      -- external interrupts --
+      ext_irq_i  : in  std_ulogic_vector(07 downto 0); -- external interrupt request lines
+      ext_ack_o  : out std_ulogic_vector(07 downto 0)  -- external interrupt request acknowledges
     );
   end component;
 
-  -- Component: Control ---------------------------------------------------------------------
+  -- Component: CPU Control -----------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_control
-    generic (
-      DADD_USE : boolean := true -- implement DADD instruction?
-    );
     port (
       -- global control --
-      clk_i      : in  std_ulogic; -- global clock, rising edge
-      rst_i      : in  std_ulogic; -- global reset, low-active, async
+      clk_i     : in  std_ulogic; -- global clock, rising edge
+      rst_i     : in  std_ulogic; -- global reset, low-active, async
       -- memory interface --
-      instr_i    : in  std_ulogic_vector(15 downto 0); -- instruction word from memory
+      instr_i   : in  std_ulogic_vector(15 downto 0); -- instruction word from memory
       -- control --
-      sreg_i     : in  std_ulogic_vector(15 downto 0); -- current status register
-      ctrl_o     : out std_ulogic_vector(ctrl_width_c-1 downto 0); -- control signals
-      irq_vec_o  : out std_ulogic_vector(01 downto 0); -- irq channel address
-      imm_o      : out std_ulogic_vector(15 downto 0); -- branch offset
+      sreg_i    : in  std_ulogic_vector(15 downto 0); -- current status register
+      ctrl_o    : out std_ulogic_vector(ctrl_width_c-1 downto 0); -- control signals
+      irq_vec_o : out std_ulogic_vector(01 downto 0); -- irq channel address
+      imm_o     : out std_ulogic_vector(15 downto 0); -- branch offset
       -- irq lines --
       irq_i     : in  std_ulogic_vector(03 downto 0); -- IRQ lines
       irq_ack_o : out std_ulogic_vector(03 downto 0)  -- IRQ acknowledge
@@ -301,42 +392,40 @@ package neo430_package is
   -- -------------------------------------------------------------------------------------------
   component neo430_reg_file
     generic (
-      BOOTLD_USE : boolean := true -- implement and use bootloader?
+      BOOTLD_USE  : boolean := true; -- implement and use bootloader?
+      IMEM_AS_ROM : boolean := false -- implement IMEM as read-only memory?
     );
     port (
       -- global control --
-      clk_i      : in  std_ulogic; -- global clock, rising edge
-      rst_i      : in  std_ulogic; -- global reset, low-active, async
+      clk_i  : in  std_ulogic; -- global clock, rising edge
+      rst_i  : in  std_ulogic; -- global reset, low-active, async
       -- data input --
-      alu_i      : in  std_ulogic_vector(15 downto 0); -- data from alu
-      addr_i     : in  std_ulogic_vector(15 downto 0); -- data from addr unit
-      flag_i     : in  std_ulogic_vector(03 downto 0); -- new ALU flags
+      alu_i  : in  std_ulogic_vector(15 downto 0); -- data from alu
+      addr_i : in  std_ulogic_vector(15 downto 0); -- data from addr unit
+      flag_i : in  std_ulogic_vector(04 downto 0); -- new ALU flags
       -- control --
-      ctrl_i     : in  std_ulogic_vector(ctrl_width_c-1 downto 0);
+      ctrl_i : in  std_ulogic_vector(ctrl_width_c-1 downto 0);
       -- data output --
-      data_o     : out std_ulogic_vector(15 downto 0); -- read data
-      sreg_o     : out std_ulogic_vector(15 downto 0)  -- current SR
+      data_o : out std_ulogic_vector(15 downto 0); -- read data
+      sreg_o : out std_ulogic_vector(15 downto 0)  -- current SR
     );
   end component;
 
   -- Component: Data ALU --------------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_alu
-    generic (
-      DADD_USE : boolean := true -- implement DADD instruction?
-    );
     port (
       -- global control --
-      clk_i      : in  std_ulogic; -- global clock, rising edge
+      clk_i  : in  std_ulogic; -- global clock, rising edge
       -- operands --
-      reg_i      : in  std_ulogic_vector(15 downto 0); -- data from reg file
-      mem_i      : in  std_ulogic_vector(15 downto 0); -- data from memory
-      sreg_i     : in  std_ulogic_vector(15 downto 0); -- current SR
+      reg_i  : in  std_ulogic_vector(15 downto 0); -- data from reg file
+      mem_i  : in  std_ulogic_vector(15 downto 0); -- data from memory
+      sreg_i : in  std_ulogic_vector(15 downto 0); -- current SR
       -- control --
-      ctrl_i     : in  std_ulogic_vector(ctrl_width_c-1 downto 0);
+      ctrl_i : in  std_ulogic_vector(ctrl_width_c-1 downto 0);
       -- results --
-      data_o     : out std_ulogic_vector(15 downto 0); -- result
-      flag_o     : out std_ulogic_vector(03 downto 0)  -- new ALU flags
+      data_o : out std_ulogic_vector(15 downto 0); -- result
+      flag_o : out std_ulogic_vector(04 downto 0)  -- new ALU flags
     );
   end component;
 
@@ -363,8 +452,8 @@ package neo430_package is
   -- -------------------------------------------------------------------------------------------
   component neo430_cpu
     generic (
-      DADD_USE   : boolean := true; -- implement DADD instruction?
-      BOOTLD_USE : boolean := true  -- implement and use bootloader?
+      BOOTLD_USE  : boolean := true; -- implement and use bootloader?
+      IMEM_AS_ROM : boolean := false -- implement IMEM as read-only memory?
     );
     port(
       -- global control --
@@ -383,7 +472,7 @@ package neo430_package is
     );
   end component;
 
-  -- Component: Instruction Memory (ROM) ----------------------------------------------------
+  -- Component: Instruction Memory RAM (IMEM) -----------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_imem
     generic (
@@ -402,7 +491,7 @@ package neo430_package is
     );
   end component;
 
-  -- Component: Data Memory (RAM) -----------------------------------------------------------
+  -- Component: Data Memory RAM (DMEM) ------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_dmem
     generic (
@@ -429,51 +518,51 @@ package neo430_package is
     );
   end component;
 
-  -- Component: Multiplier/Divider ----------------------------------------------------------
+  -- Component: Multiplier/Divider (MULDIV) -------------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_muldiv
     port (
       -- host access --
       clk_i  : in  std_ulogic; -- global clock line
       rden_i : in  std_ulogic; -- read enable
-      wren_i : in  std_ulogic_vector(01 downto 0); -- write enable
+      wren_i : in  std_ulogic; -- write enable
       addr_i : in  std_ulogic_vector(15 downto 0); -- address
       data_i : in  std_ulogic_vector(15 downto 0); -- data in
       data_o : out std_ulogic_vector(15 downto 0)  -- data out
     );
   end component;
 
-  -- Component: 32bit Wishbone Interface ----------------------------------------------------
+  -- Component: 32bit Wishbone Interface (WB32) ---------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_wb_interface
     port (
       -- host access --
-      clk_i       : in  std_ulogic; -- global clock line
-      rden_i      : in  std_ulogic; -- read enable
-      wren_i      : in  std_ulogic_vector(01 downto 0); -- write enable
-      addr_i      : in  std_ulogic_vector(15 downto 0); -- address
-      data_i      : in  std_ulogic_vector(15 downto 0); -- data in
-      data_o      : out std_ulogic_vector(15 downto 0); -- data out
+      clk_i    : in  std_ulogic; -- global clock line
+      rden_i   : in  std_ulogic; -- read enable
+      wren_i   : in  std_ulogic; -- write enable
+      addr_i   : in  std_ulogic_vector(15 downto 0); -- address
+      data_i   : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o   : out std_ulogic_vector(15 downto 0); -- data out
       -- wishbone interface --
-      wb_adr_o    : out std_ulogic_vector(31 downto 0); -- address
-      wb_dat_i    : in  std_ulogic_vector(31 downto 0); -- read data
-      wb_dat_o    : out std_ulogic_vector(31 downto 0); -- write data
-      wb_we_o     : out std_ulogic; -- read/write
-      wb_sel_o    : out std_ulogic_vector(03 downto 0); -- byte enable
-      wb_stb_o    : out std_ulogic; -- strobe
-      wb_cyc_o    : out std_ulogic; -- valid cycle
-      wb_ack_i    : in  std_ulogic  -- transfer acknowledge
+      wb_adr_o : out std_ulogic_vector(31 downto 0); -- address
+      wb_dat_i : in  std_ulogic_vector(31 downto 0); -- read data
+      wb_dat_o : out std_ulogic_vector(31 downto 0); -- write data
+      wb_we_o  : out std_ulogic; -- read/write
+      wb_sel_o : out std_ulogic_vector(03 downto 0); -- byte enable
+      wb_stb_o : out std_ulogic; -- strobe
+      wb_cyc_o : out std_ulogic; -- valid cycle
+      wb_ack_i : in  std_ulogic  -- transfer acknowledge
     );
   end component;
 
-  -- Component: USART -----------------------------------------------------------------------
+  -- Component: Universal Asynchornous Receiver/Transmitter (UART) --------------------------
   -- -------------------------------------------------------------------------------------------
-  component neo430_usart
+  component neo430_uart
     port (
       -- host access --
       clk_i       : in  std_ulogic; -- global clock line
       rden_i      : in  std_ulogic; -- read enable
-      wren_i      : in  std_ulogic_vector(01 downto 0); -- write enable
+      wren_i      : in  std_ulogic; -- write enable
       addr_i      : in  std_ulogic_vector(15 downto 0); -- address
       data_i      : in  std_ulogic_vector(15 downto 0); -- data in
       data_o      : out std_ulogic_vector(15 downto 0); -- data out
@@ -483,42 +572,64 @@ package neo430_package is
       -- com lines --
       uart_txd_o  : out std_ulogic;
       uart_rxd_i  : in  std_ulogic;
-      spi_sclk_o  : out std_ulogic; -- SPI serial clock
-      spi_mosi_o  : out std_ulogic; -- SPI master out, slave in
-      spi_miso_i  : in  std_ulogic; -- SPI master in, slave out
-      spi_cs_o    : out std_ulogic_vector(05 downto 0); -- SPI CS 0..5
       -- interrupts --
-      usart_irq_o : out std_ulogic  -- spi transmission done / uart rx/tx interrupt
+      uart_irq_o  : out std_ulogic  -- uart rx/tx interrupt
     );
   end component;
 
-  -- Component: GPIO ------------------------------------------------------------------------
+  -- Component: Serial Peripheral Interface (SPI) -------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  component neo430_gpio
+  component neo430_spi
     port (
       -- host access --
       clk_i       : in  std_ulogic; -- global clock line
       rden_i      : in  std_ulogic; -- read enable
-      wren_i      : in  std_ulogic_vector(01 downto 0); -- write enable
+      wren_i      : in  std_ulogic; -- write enable
       addr_i      : in  std_ulogic_vector(15 downto 0); -- address
       data_i      : in  std_ulogic_vector(15 downto 0); -- data in
       data_o      : out std_ulogic_vector(15 downto 0); -- data out
-      -- parallel io --
-      gpio_o      : out std_ulogic_vector(15 downto 0);
-      gpio_i      : in  std_ulogic_vector(15 downto 0);
+      -- clock generator --
+      clkgen_en_o : out std_ulogic; -- enable clock generator
+      clkgen_i    : in  std_ulogic_vector(07 downto 0);
+      -- com lines --
+      spi_sclk_o  : out std_ulogic; -- SPI serial clock
+      spi_mosi_o  : out std_ulogic; -- SPI master out, slave in
+      spi_miso_i  : in  std_ulogic; -- SPI master in, slave out
+      spi_cs_o    : out std_ulogic_vector(07 downto 0); -- SPI CS 0..7
       -- interrupt --
-      irq_o       : out std_ulogic
+      spi_irq_o   : out std_ulogic -- transmission done interrupt
     );
   end component;
 
-  -- Component: High-Precision Timer --------------------------------------------------------
+  -- Component: General Purpose Input/Ouput Controller (GPIO) -------------------------------
+  -- -------------------------------------------------------------------------------------------
+  component neo430_gpio
+    port (
+      -- host access --
+      clk_i      : in  std_ulogic; -- global clock line
+      rden_i     : in  std_ulogic; -- read enable
+      wren_i     : in  std_ulogic; -- write enable
+      addr_i     : in  std_ulogic_vector(15 downto 0); -- address
+      data_i     : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o     : out std_ulogic_vector(15 downto 0); -- data out
+      -- parallel io --
+      gpio_o     : out std_ulogic_vector(15 downto 0);
+      gpio_i     : in  std_ulogic_vector(15 downto 0);
+      -- GPIO PWM --
+      gpio_pwm_i : in  std_ulogic;
+      -- interrupt --
+      irq_o      : out std_ulogic
+    );
+  end component;
+
+  -- Component: High-Precision Timer (TIMER) ------------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_timer
     port (
       -- host access --
       clk_i       : in  std_ulogic; -- global clock line
       rden_i      : in  std_ulogic; -- read enable
-      wren_i      : in  std_ulogic_vector(01 downto 0); -- write enable
+      wren_i      : in  std_ulogic; -- write enable
       addr_i      : in  std_ulogic_vector(15 downto 0); -- address
       data_i      : in  std_ulogic_vector(15 downto 0); -- data in
       data_o      : out std_ulogic_vector(15 downto 0); -- data out
@@ -530,7 +641,7 @@ package neo430_package is
     );
   end component;
 
-  -- Component: Watchdog Timer --------------------------------------------------------------
+  -- Component: Watchdog Timer (WDT) --------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_wdt
     port (
@@ -538,7 +649,7 @@ package neo430_package is
       clk_i       : in  std_ulogic; -- global clock line
       rst_i       : in  std_ulogic; -- global (external) reset, low-active, use as async
       rden_i      : in  std_ulogic; -- read enable
-      wren_i      : in  std_ulogic_vector(01 downto 0); -- write enable
+      wren_i      : in  std_ulogic; -- write enable
       addr_i      : in  std_ulogic_vector(15 downto 0); -- address
       data_i      : in  std_ulogic_vector(15 downto 0); -- data in
       data_o      : out std_ulogic_vector(15 downto 0); -- data out
@@ -550,7 +661,113 @@ package neo430_package is
     );
   end component;
 
-  -- Component: System Configuration --------------------------------------------------------
+  -- Component: Cyclic Redundancy Check Unit (CRC)-------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  component neo430_crc
+    port (
+      -- host access --
+      clk_i  : in  std_ulogic; -- global clock line
+      rden_i : in  std_ulogic; -- read enable
+      wren_i : in  std_ulogic; -- write enable
+      addr_i : in  std_ulogic_vector(15 downto 0); -- address
+      data_i : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o : out std_ulogic_vector(15 downto 0)  -- data out
+    );
+  end component;
+
+  -- Component: Custom Functions Unit (CFU) -------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  component neo430_cfu
+    port (
+      -- host access --
+      clk_i  : in  std_ulogic; -- global clock line
+      rden_i : in  std_ulogic; -- read enable
+      wren_i : in  std_ulogic; -- write enable
+      addr_i : in  std_ulogic_vector(15 downto 0); -- address
+      data_i : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o : out std_ulogic_vector(15 downto 0)  -- data out
+      -- custom IOs --
+--    ...
+    );
+  end component;
+
+  -- Component: PWM Controller (PWM) --------------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  component neo430_pwm
+    port (
+      -- host access --
+      clk_i       : in  std_ulogic; -- global clock line
+      rden_i      : in  std_ulogic; -- read enable
+      wren_i      : in  std_ulogic; -- write enable
+      addr_i      : in  std_ulogic_vector(15 downto 0); -- address
+      data_i      : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o      : out std_ulogic_vector(15 downto 0); -- data out
+      -- clock generator --
+      clkgen_en_o : out std_ulogic; -- enable clock generator
+      clkgen_i    : in  std_ulogic_vector(07 downto 0);
+      -- GPIO output PWM --
+      gpio_pwm_o  : out std_ulogic;
+      -- pwm output channels --
+      pwm_o       : out std_ulogic_vector(03 downto 0)
+    );
+  end component;
+
+  -- Component: Serial Two Wire Interfcae (TWI) ---------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  component neo430_twi
+    port (
+      -- host access --
+      clk_i       : in  std_ulogic; -- global clock line
+      rden_i      : in  std_ulogic; -- read enable
+      wren_i      : in  std_ulogic; -- write enable
+      addr_i      : in  std_ulogic_vector(15 downto 0); -- address
+      data_i      : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o      : out std_ulogic_vector(15 downto 0); -- data out
+      -- clock generator --
+      clkgen_en_o : out std_ulogic; -- enable clock generator
+      clkgen_i    : in  std_ulogic_vector(07 downto 0);
+      -- com lines --
+      twi_sda_io  : inout std_logic; -- serial data line
+      twi_scl_io  : inout std_logic; -- serial clock line
+      -- interrupt --
+      twi_irq_o   : out std_ulogic -- transfer done IRQ
+    );
+  end component;
+
+  -- Component: True Random Number Generator (TRNG) -----------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  component neo430_trng
+    port (
+      -- host access --
+      clk_i  : in  std_ulogic; -- global clock line
+      rden_i : in  std_ulogic; -- read enable
+      wren_i : in  std_ulogic; -- write enable
+      addr_i : in  std_ulogic_vector(15 downto 0); -- address
+      data_i : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o : out std_ulogic_vector(15 downto 0)  -- data out
+    );
+  end component;
+
+  -- Component: External Interrupts Controller (EXIRQ) --------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  component neo430_exirq
+    port (
+      -- host access --
+      clk_i     : in  std_ulogic; -- global clock line
+      rden_i    : in  std_ulogic; -- read enable
+      wren_i    : in  std_ulogic; -- write enable
+      addr_i    : in  std_ulogic_vector(15 downto 0); -- address
+      data_i    : in  std_ulogic_vector(15 downto 0); -- data in
+      data_o    : out std_ulogic_vector(15 downto 0); -- data out
+      -- cpu interrupt --
+      cpu_irq_o : out std_ulogic;
+      -- external interrupt lines --
+      ext_irq_i : in  std_ulogic_vector(7 downto 0); -- IRQ
+      ext_ack_o : out std_ulogic_vector(7 downto 0)  -- acknowledge
+    );
+  end component;
+
+  -- Component: System Configuration (SYSCONFIG) --------------------------------------------
   -- -------------------------------------------------------------------------------------------
   component neo430_sysconfig
     generic (
@@ -561,13 +778,19 @@ package neo430_package is
       -- additional configuration --
       USER_CODE   : std_ulogic_vector(15 downto 0) := x"0000"; -- custom user code
       -- module configuration --
-      DADD_USE    : boolean := true;  -- implement DADD instruction?
-      MULDIV_USE  : boolean := false; -- implement multiplier/divider unit?
-      WB32_USE    : boolean := true;  -- implement WB32 unit?
-      WDT_USE     : boolean := true;  -- implement WDT?
-      GPIO_USE    : boolean := true;  -- implement GPIO unit?
-      TIMER_USE   : boolean := true;  -- implement timer?
-      USART_USE   : boolean := true;  -- implement USART?
+      MULDIV_USE  : boolean := true; -- implement multiplier/divider unit?
+      WB32_USE    : boolean := true; -- implement WB32 unit?
+      WDT_USE     : boolean := true; -- implement WDT?
+      GPIO_USE    : boolean := true; -- implement GPIO unit?
+      TIMER_USE   : boolean := true; -- implement timer?
+      UART_USE    : boolean := true; -- implement UART?
+      CRC_USE     : boolean := true; -- implement CRC unit?
+      CFU_USE     : boolean := true; -- implement CF unit?
+      PWM_USE     : boolean := true; -- implement PWM controller?
+      TWI_USE     : boolean := true; -- implement TWI?
+      SPI_USE     : boolean := true; -- implement SPI?
+      TRNG_USE    : boolean := true; -- implement TRNG?
+      EXIRQ_USE   : boolean := true; -- implement EXIRQ? (default=true)
       -- boot configuration --
       BOOTLD_USE  : boolean := true; -- implement and use bootloader?
       IMEM_AS_ROM : boolean := false -- implement IMEM as read-only memory?
@@ -575,7 +798,7 @@ package neo430_package is
     port (
       clk_i  : in  std_ulogic; -- global clock line
       rden_i : in  std_ulogic; -- read enable
-      wren_i : in  std_ulogic_vector(01 downto 0); -- write enable
+      wren_i : in  std_ulogic; -- write enable
       addr_i : in  std_ulogic_vector(15 downto 0); -- address
       data_i : in  std_ulogic_vector(15 downto 0); -- data in
       data_o : out std_ulogic_vector(15 downto 0)  -- data out
@@ -586,9 +809,9 @@ end neo430_package;
 
 package body neo430_package is
 
-  -- Function: Minimum required bit width ---------------------------------------------------
+  -- Function: Minimal required bit width ---------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function index_size(input : natural) return natural is
+  function index_size_f(input : natural) return natural is
   begin
     for i in 0 to natural'high loop
       if (2**i >= input) then
@@ -596,11 +819,11 @@ package body neo430_package is
       end if;
     end loop; -- i
     return 0;
-  end function index_size;
+  end function index_size_f;
 
-  -- Function: Test is value (encoded with a certain bit width) is a power of 2 -------------
+  -- Function: Test if value (encoded with a certain bit width) is a power of 2 -------------
   -- -------------------------------------------------------------------------------------------
-  function is_power_of_two(num : natural; bit_width : natural) return boolean is
+  function is_power_of_two_f(num : natural; bit_width : natural) return boolean is
   begin
     for i in 0 to bit_width loop
       if ((2**i) = num) then
@@ -608,22 +831,22 @@ package body neo430_package is
       end if;
     end loop; -- i
     return false;
-  end function is_power_of_two;
+  end function is_power_of_two_f;
 
   -- Function: Bit reversal -----------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function bit_reversal(input : std_ulogic_vector) return std_ulogic_vector is
+  function bit_reversal_f(input : std_ulogic_vector) return std_ulogic_vector is
     variable output_v : std_ulogic_vector(input'range);
   begin
     for i in 0 to input'length-1 loop
       output_v(input'length-i-1) := input(i);
     end loop; -- i
     return output_v;
-  end function bit_reversal;
+  end function bit_reversal_f;
 
   -- Function: Count number of set bits (aka population count) ------------------------------
   -- -------------------------------------------------------------------------------------------
-  function set_bits(input : std_ulogic_vector) return natural is
+  function set_bits_f(input : std_ulogic_vector) return natural is
     variable cnt_v : natural range 0 to input'length-1;
   begin
     cnt_v := 0;
@@ -633,11 +856,11 @@ package body neo430_package is
       end if;
     end loop; -- i
     return cnt_v;
-  end function set_bits;
+  end function set_bits_f;
 
   -- Function: Count leading zeros ----------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function leading_zeros(input : std_ulogic_vector) return natural is
+  function leading_zeros_f(input : std_ulogic_vector) return natural is
     variable cnt_v : natural range 0 to input'length;
   begin
     cnt_v := 0;
@@ -649,44 +872,44 @@ package body neo430_package is
       end if;
     end loop; -- i
     return cnt_v;
-  end function leading_zeros;
+  end function leading_zeros_f;
 
   -- Function: Conditional select natural ---------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function cond_sel_natural(cond : boolean; val_t : natural; val_f : natural) return natural is
+  function cond_sel_natural_f(cond : boolean; val_t : natural; val_f : natural) return natural is
   begin
     if (cond = true) then
       return val_t;
     else
       return val_f;
     end if;
-  end function cond_sel_natural;
+  end function cond_sel_natural_f;
 
   -- Function: Conditional select std_ulogic_vector -----------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function cond_sel_stdulogicvector(cond : boolean; val_t : std_ulogic_vector; val_f : std_ulogic_vector) return std_ulogic_vector is
+  function cond_sel_stdulogicvector_f(cond : boolean; val_t : std_ulogic_vector; val_f : std_ulogic_vector) return std_ulogic_vector is
   begin
     if (cond = true) then
       return val_t;
     else
       return val_f;
     end if;
-  end function cond_sel_stdulogicvector;
+  end function cond_sel_stdulogicvector_f;
 
   -- Function: Convert BOOL to STD_ULOGIC ---------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function bool_to_ulogic(cond : boolean) return std_ulogic is
+  function bool_to_ulogic_f(cond : boolean) return std_ulogic is
   begin
     if (cond = true) then
       return '1';
     else
       return '0';
     end if;
-  end function bool_to_ulogic;
+  end function bool_to_ulogic_f;
 
   -- Function: Binary to Gray ---------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function bin_to_gray(input : std_ulogic_vector) return std_ulogic_vector is
+  function bin_to_gray_f(input : std_ulogic_vector) return std_ulogic_vector is
     variable output_v : std_ulogic_vector(input'range);
   begin
     output_v(input'length-1) := input(input'length-1); -- keep MSB
@@ -694,11 +917,11 @@ package body neo430_package is
       output_v(i) := input(i) xor input(i+1);
     end loop; -- i
     return output_v;
-  end function bin_to_gray;
+  end function bin_to_gray_f;
 
   -- Function: Gray to Binary ---------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function gray_to_bin(input : std_ulogic_vector) return std_ulogic_vector is
+  function gray_to_bin_f(input : std_ulogic_vector) return std_ulogic_vector is
     variable output_v : std_ulogic_vector(input'range);
   begin
     output_v(input'length-1) := input(input'length-1); -- keep MSB
@@ -706,11 +929,11 @@ package body neo430_package is
       output_v(i) := output_v(i+1) xor input(i);
     end loop; -- i
     return output_v;
-  end function gray_to_bin;
+  end function gray_to_bin_f;
 
   -- Function: Integer (4-bit) to hex char --------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function int_to_hexchar(input : integer) return character is
+  function int_to_hexchar_f(input : integer) return character is
     variable output_v : character;
   begin
     case (input) is
@@ -733,11 +956,11 @@ package body neo430_package is
       when others => output_v := '?';
     end case;
     return output_v;
-  end function int_to_hexchar;
+  end function int_to_hexchar_f;
 
   -- Function: 4-bit BCD addition with carry ------------------------------------------------
   -- -------------------------------------------------------------------------------------------
-  function bcd_add4(a : std_ulogic_vector; b : std_ulogic_vector; c : std_ulogic) return std_ulogic_vector is
+  function bcd_add4_f(a : std_ulogic_vector; b : std_ulogic_vector; c : std_ulogic) return std_ulogic_vector is
     variable tmp_v : unsigned(4 downto 0);
     variable res_v : unsigned(3 downto 0);
     variable cry_v : std_ulogic;
@@ -751,7 +974,43 @@ package body neo430_package is
       cry_v := '0';
     end if;
     return std_ulogic_vector(cry_v & res_v);
-  end function bcd_add4;
+  end function bcd_add4_f;
+
+  -- Function: OR all bits ------------------------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  function or_all_f(a : std_ulogic_vector) return std_ulogic is
+    variable tmp_v : std_ulogic;
+  begin
+    tmp_v := a(a'low);
+    for i in a'low+1 to a'high loop
+      tmp_v := tmp_v or a(i);
+    end loop; -- i
+    return tmp_v;
+  end function or_all_f;
+
+  -- Function: AND all bits -----------------------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  function and_all_f(a : std_ulogic_vector) return std_ulogic is
+    variable tmp_v : std_ulogic;
+  begin
+    tmp_v := a(a'low);
+    for i in a'low+1 to a'high loop
+      tmp_v := tmp_v and a(i);
+    end loop; -- i
+    return tmp_v;
+  end function and_all_f;
+
+  -- Function: XOR all bits -----------------------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  function xor_all_f(a : std_ulogic_vector) return std_ulogic is
+    variable tmp_v : std_ulogic;
+  begin
+    tmp_v := a(a'low);
+    for i in a'low+1 to a'high loop
+      tmp_v := tmp_v xor a(i);
+    end loop; -- i
+    return tmp_v;
+  end function xor_all_f;
 
 
 end neo430_package;

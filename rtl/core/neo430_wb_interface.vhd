@@ -19,7 +19,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               19.07.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 28.04.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -34,7 +34,7 @@ entity neo430_wb_interface is
     -- host access --
     clk_i    : in  std_ulogic; -- global clock line
     rden_i   : in  std_ulogic; -- read enable
-    wren_i   : in  std_ulogic_vector(01 downto 0); -- write enable
+    wren_i   : in  std_ulogic; -- write enable
     addr_i   : in  std_ulogic_vector(15 downto 0); -- address
     data_i   : in  std_ulogic_vector(15 downto 0); -- data in
     data_o   : out std_ulogic_vector(15 downto 0); -- data out
@@ -53,8 +53,8 @@ end neo430_wb_interface;
 architecture neo430_wb_interface_rtl of neo430_wb_interface is
 
   -- IO space: module base address --
-  constant hi_abb_c : natural := index_size(io_size_c)-1; -- high address boundary bit
-  constant lo_abb_c : natural := index_size(wb32_size_c); -- low address boundary bit
+  constant hi_abb_c : natural := index_size_f(io_size_c)-1; -- high address boundary bit
+  constant lo_abb_c : natural := index_size_f(wb32_size_c); -- low address boundary bit
 
   -- control reg bits --
   constant ctrl_byte_en0_c : natural :=  0; -- -/w: wishbone data byte enable bit 0
@@ -84,7 +84,7 @@ begin
   -- -----------------------------------------------------------------------------
   acc_en <= '1' when (addr_i(hi_abb_c downto lo_abb_c) = wb32_base_c(hi_abb_c downto lo_abb_c)) else '0';
   addr   <= wb32_base_c(15 downto lo_abb_c) & addr_i(lo_abb_c-1 downto 1) & '0'; -- word aligned
-  wr_en  <= acc_en and wren_i(0) and wren_i(1);
+  wr_en  <= acc_en and wren_i;
 
 
   -- Write access -------------------------------------------------------------
@@ -92,39 +92,36 @@ begin
   wr_access: process(clk_i)
   begin
     if rising_edge(clk_i) then
-      for i in 0 to 1 loop
-        if (acc_en = '1') and (wren_i(i) = '1') then -- valid byte write
-          case addr is
-            when wb32_rd_adr_lo_addr_c =>
-              wb_addr(7+i*8 downto 0+i*8) <= data_i(7+i*8 downto 0+i*8);
-              wb_we_o <= '0';
-            when wb32_rd_adr_hi_addr_c =>
-              wb_addr(23+i*8 downto 16+i*8) <= data_i(7+i*8 downto 0+i*8);
-              wb_we_o <= '0';
-            when wb32_wr_adr_lo_addr_c =>
-              wb_addr(7+i*8 downto 0+i*8) <= data_i(7+i*8 downto 0+i*8);
-              wb_we_o <= '1';
-            when wb32_wr_adr_hi_addr_c =>
-              wb_addr(23+i*8 downto 16+i*8) <= data_i(7+i*8 downto 0+i*8);
-              wb_we_o <= '1';
-            when wb32_data_lo_addr_c =>
-              wb_wdata(7+i*8 downto 0+i*8) <= data_i(7+i*8 downto 0+i*8);
-            when wb32_data_hi_addr_c =>
-              wb_wdata(23+i*8 downto 16+i*8) <= data_i(7+i*8 downto 0+i*8);
-            when wb32_ctrl_addr_c =>
-              if (i = 0) then
-                byte_en(0) <= data_i(ctrl_byte_en0_c);
-                byte_en(1) <= data_i(ctrl_byte_en1_c);
-                byte_en(2) <= data_i(ctrl_byte_en2_c);
-                byte_en(3) <= data_i(ctrl_byte_en3_c);
-              else
-                NULL;
-              end if;
-            when others =>
-              NULL;
-          end case;
+      if (wr_en = '1') then -- valid word write
+        if (addr = wb32_rd_adr_lo_addr_c) then
+          wb_addr(15 downto 0) <= data_i;
+          wb_we_o <= '0';
         end if;
-      end loop; -- i
+        if (addr = wb32_rd_adr_hi_addr_c) then
+          wb_addr(31 downto 16) <= data_i;
+          wb_we_o <= '0';
+        end if;
+        if (addr = wb32_wr_adr_lo_addr_c) then
+          wb_addr(15 downto 0) <= data_i;
+          wb_we_o <= '1';
+        end if;
+        if (addr = wb32_wr_adr_hi_addr_c) then
+          wb_addr(31 downto 16) <= data_i;
+          wb_we_o <= '1';
+        end if;
+        if (addr = wb32_data_lo_addr_c) then
+          wb_wdata(15 downto 0) <= data_i;
+        end if;
+        if (addr = wb32_data_hi_addr_c) then
+          wb_wdata(31 downto 16) <= data_i;
+        end if;
+        if (addr = wb32_ctrl_addr_c) then
+          byte_en(0) <= data_i(ctrl_byte_en0_c);
+          byte_en(1) <= data_i(ctrl_byte_en1_c);
+          byte_en(2) <= data_i(ctrl_byte_en2_c);
+          byte_en(3) <= data_i(ctrl_byte_en3_c);
+        end if;
+      end if;
     end if;
   end process wr_access;
 
@@ -160,7 +157,7 @@ begin
   end process arbiter;
 
   -- device actually in use? --
-  enable <= '0' when (byte_en = "0000") else '1';
+  enable <= or_all_f(byte_en);
 
   -- valid cycle signal --
   wb_cyc_o <= pending;
@@ -173,15 +170,13 @@ begin
     if rising_edge(clk_i) then
       data_o <= (others => '0');
       if (rden_i = '1') and (acc_en = '1') then
-        case addr is
-          when wb32_data_lo_addr_c =>
-            data_o <= wb_rdata(15 downto 00);
-          when wb32_data_hi_addr_c =>
-            data_o <= wb_rdata(31 downto 16);
-          when others =>
---        when wb32_ctrl_addr_c =>
-            data_o(ctrl_pending_c) <= pending;
-        end case;
+        if (addr = wb32_data_lo_addr_c) then
+          data_o <= wb_rdata(15 downto 00);
+        elsif (addr = wb32_data_hi_addr_c) then
+          data_o <= wb_rdata(31 downto 16);
+        else -- when wb32_ctrl_addr_c =>
+          data_o(ctrl_pending_c) <= pending;
+        end if;
       end if;
     end if;
   end process rd_access;

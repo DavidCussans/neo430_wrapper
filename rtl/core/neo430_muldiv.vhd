@@ -1,13 +1,14 @@
 -- #################################################################################################
 -- #  << NEO430 - 16-Bit Unsigned Multiplier & Divider Unit >>                                     #
 -- # ********************************************************************************************* #
--- #  NOTE: This unit uses "repeated trial subtraction" as division algorithm                      #
--- #  NOTE: This unit uses "shifted add" as multiplication algorithm                               #
--- #  Division: DIVIDEND / DIVIDER = QUOTIENT + REMAINDER / DIVIDER (each 16-bit)                  #
--- #  Multiplication: FACTOR1 * FACTOR2 = PRODUCT (32-bit)                                         #
+-- # NOTE: This unit uses "repeated trial subtraction" as division algorithm.                      #
+-- # NOTE: This unit uses "shifted add" as multiplication algorithm. Set 'use_dsp_mul_c' in the    #
+-- # package file to TRUE to use DSP slices for multiplication.                                    #
+-- # Division: DIVIDEND / DIVIDER = QUOTIENT + REMAINDER (16-bit) / DIVIDER (16-bit)               #
+-- # Multiplication: FACTOR1 * FACTOR2 = PRODUCT (32-bit)                                          #
 -- # ********************************************************************************************* #
--- # This file is part of the NEO430 Processor project: http://opencores.org/project,neo430        #
--- # Copyright 2015-2016, Stephan Nolting: stnolting@gmail.com                                     #
+-- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
+-- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
 -- #                                                                                               #
 -- # This source file may be used and distributed without restriction provided that this copyright #
 -- # statement is not removed from the file and that any derivative work contains the original     #
@@ -22,9 +23,9 @@
 -- # See the GNU Lesser General Public License for more details.                                   #
 -- #                                                                                               #
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
--- # source; if not, download it from http://www.gnu.org/licenses/lgpl-3.0.en.html                 #
+-- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               01.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 29.04.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -39,7 +40,7 @@ entity neo430_muldiv is
     -- host access --
     clk_i  : in  std_ulogic; -- global clock line
     rden_i : in  std_ulogic; -- read enable
-    wren_i : in  std_ulogic_vector(01 downto 0); -- write enable
+    wren_i : in  std_ulogic; -- write enable
     addr_i : in  std_ulogic_vector(15 downto 0); -- address
     data_i : in  std_ulogic_vector(15 downto 0); -- data in
     data_o : out std_ulogic_vector(15 downto 0)  -- data out
@@ -49,8 +50,8 @@ end neo430_muldiv;
 architecture neo430_muldiv_rtl of neo430_muldiv is
 
   -- IO space: module base address --
-  constant hi_abb_c : natural := index_size(io_size_c)-1; -- high address boundary bit
-  constant lo_abb_c : natural := index_size(muldiv_size_c); -- low address boundary bit
+  constant hi_abb_c : natural := index_size_f(io_size_c)-1; -- high address boundary bit
+  constant lo_abb_c : natural := index_size_f(muldiv_size_c); -- low address boundary bit
 
   -- access control --
   signal acc_en : std_ulogic; -- module access enable
@@ -78,7 +79,7 @@ begin
   -- -----------------------------------------------------------------------------
   acc_en <= '1' when (addr_i(hi_abb_c downto lo_abb_c) = muldiv_base_c(hi_abb_c downto lo_abb_c)) else '0';
   addr   <= muldiv_base_c(15 downto lo_abb_c) & addr_i(lo_abb_c-1 downto 1) & '0'; -- word aligned
-  wr_en  <= acc_en and wren_i(0) and wren_i(1);
+  wr_en  <= acc_en and wren_i;
 
 
   -- Write access -------------------------------------------------------------
@@ -89,24 +90,19 @@ begin
       start <= '0';
       if (wr_en = '1') then -- only full word accesses!
         -- operands --
-        case addr is
-          when muldiv_opa_addr_c => -- dividend or factor 1
-            opa <= data_i;
-          when muldiv_opb_div_addr_c | muldiv_opb_mul_addr_c => -- divisor or factor 2
-            opb <= data_i;
-            start <= '1'; -- trigger operation
-          when others =>
-            NULL;
-        end case;
-        -- operation division/multiplication --
-        case addr is
-          when muldiv_opb_div_addr_c => -- division
-            operation <= '1';
-          when muldiv_opb_mul_addr_c => -- multiplication
-            operation <= '0';
-          when others =>
-            NULL;
-        end case;
+        if (addr = muldiv_opa_addr_c) then -- dividend or factor 1
+          opa <= data_i;
+        end if;
+        if (addr = muldiv_opb_div_addr_c) or (addr = muldiv_opb_mul_addr_c) then -- divisor or factor 2
+          opb <= data_i;
+          start <= '1'; -- trigger operation
+        end if;
+        -- operation: division/multiplication --
+        if (addr = muldiv_opb_div_addr_c) then -- division
+          operation <= '1';
+        else -- multiplication
+          operation <= '0';
+        end if;
       end if;
     end if;
   end process wr_access;
@@ -140,18 +136,22 @@ begin
         end if;
       -- multiplication core --
       else
-        if (start = '1') then -- load factor 1
-          product(31 downto 16) <= (others => '0');
-          product(15 downto  0) <= opa;
-        elsif (run = '1') then
-          product(31 downto 15) <= do_add(16 downto 0);
-          product(14 downto  0) <= product(15 downto 1);
+        if (use_dsp_mul_c = false) then -- implement serial multiplication
+          if (start = '1') then -- load factor 1
+            product(31 downto 16) <= (others => '0');
+            product(15 downto  0) <= opa;
+          elsif (run = '1') then
+            product(31 downto 15) <= do_add(16 downto 0);
+            product(14 downto  0) <= product(15 downto 1);
+          end if;
+        else -- use DSP for multiplication
+          product(31 downto 0) <= std_ulogic_vector(unsigned(opa) * unsigned(opb));
         end if;
       end if;
     end if;
   end process arithmetic_core;
 
-  -- DIV: try another subtraction... --
+  -- DIV: try another subtraction --
   try_sub <= std_ulogic_vector(unsigned('0' & remainder(14 downto 0) & quotient(15)) - unsigned('0' & opb));
 
   -- MUL: do another addition

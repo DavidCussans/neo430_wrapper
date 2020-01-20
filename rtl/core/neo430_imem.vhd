@@ -1,10 +1,10 @@
 -- #################################################################################################
 -- #  << NEO430 - Instruction memory ("IMEM") >>                                                   #
 -- # ********************************************************************************************* #
--- #  This memory includes the in-place executable image of the application. See the               #
--- #  processor's documentary to get more information.                                             #
--- #  Note: IMEM is split up into two 8-bit memories - some EDA tools have problems to synthesize  #
--- #  a pre-initialized 16-bit memory with byte-enable signals.                                    #
+-- # This memory includes the in-place executable image of the application. See the                #
+-- # processor's documentary to get more information.                                              #
+-- # Note: IMEM is split up into two 8-bit memories - some EDA tools have problems to synthesize   #
+-- # a pre-initialized 16-bit memory with byte-enable signals.                                     #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -24,7 +24,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               01.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 29.04.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -58,11 +58,11 @@ architecture neo430_imem_rtl of neo430_imem is
   type imem_file8_t is array (0 to IMEM_SIZE/2-1) of std_ulogic_vector(07 downto 0);
 
   -- init function and split 1x16-bit memory into 2x8-bit memories --
-  impure function init_imem(hilo : boolean; init : application_init_image_t) return imem_file8_t is
+  impure function init_imem(hilo : std_ulogic; init : application_init_image_t) return imem_file8_t is
     variable mem_v : imem_file8_t;
   begin
     for i in 0 to IMEM_SIZE/2-1 loop
-      if (hilo = false) then -- low byte
+      if (hilo = '0') then -- low byte
         mem_v(i) := init(i)(07 downto 00);
       else -- high byte
         mem_v(i) := init(i)(15 downto 08);
@@ -77,107 +77,82 @@ architecture neo430_imem_rtl of neo430_imem is
   signal rden   : std_ulogic;
   signal addr   : integer;
 
-  -- internal ROM type --
-  -- initialize only when no bootloader is used!
-  signal imem_file_l : imem_file8_t := init_imem(false, application_init_image);
-  signal imem_file_h : imem_file8_t := init_imem(true,  application_init_image);
-  -- DO NOT initialize IMEM when using bootloader
-  -- -> allow mapping of IMEM to memory resources that cannot be initialized using the bitstream
-  signal imem_file_noinit_l : imem_file8_t;
-  signal imem_file_noinit_h : imem_file8_t;
+  -- internal "RAM" type - implemented if bootloader is used and IMEM is RAM and initialized with app code --
+  signal imem_file_init_ram_l : imem_file8_t := init_imem('0', application_init_image);
+  signal imem_file_init_ram_h : imem_file8_t := init_imem('1', application_init_image);
 
-  -- RAM attribute to inhibit bypass-logic - Altera only! --
+  -- internal "ROM" type - implemented if bootloader is NOT used; always initialize with app code --
+  constant imem_file_rom_l : imem_file8_t := init_imem('0', application_init_image);
+  constant imem_file_rom_h : imem_file8_t := init_imem('1', application_init_image);
+
+  -- internal "RAM" type - implemented if bootloader is used and IMEM is RAM --
+  signal imem_file_ram_l : imem_file8_t;
+  signal imem_file_ram_h : imem_file8_t;
+
+  -- RAM attribute to inhibit bypass-logic - Intel only! --
   attribute ramstyle : string;
-  attribute ramstyle of imem_file_l        : signal is "no_rw_check";
-  attribute ramstyle of imem_file_h        : signal is "no_rw_check";
-  attribute ramstyle of imem_file_noinit_l : signal is "no_rw_check";
-  attribute ramstyle of imem_file_noinit_h : signal is "no_rw_check";
+  attribute ramstyle of imem_file_init_ram_l : signal is "no_rw_check";
+  attribute ramstyle of imem_file_init_ram_h : signal is "no_rw_check";
+  attribute ramstyle of imem_file_ram_l : signal is "no_rw_check";
+  attribute ramstyle of imem_file_ram_h : signal is "no_rw_check";
+
+  -- RAM attribute to inhibit bypass-logic - Lattice only! --
+  attribute syn_ramstyle : string;
+  attribute syn_ramstyle of imem_file_init_ram_l : signal is "no_rw_check";
+  attribute syn_ramstyle of imem_file_init_ram_h : signal is "no_rw_check";
+  attribute syn_ramstyle of imem_file_ram_l : signal is "no_rw_check";
+  attribute syn_ramstyle of imem_file_ram_h : signal is "no_rw_check";
 
 begin
 
   -- Access Control -----------------------------------------------------------
   -- -----------------------------------------------------------------------------
   acc_en <= '1' when (addr_i >= imem_base_c) and (addr_i < std_ulogic_vector(unsigned(imem_base_c) + IMEM_SIZE)) else '0';
-  addr   <= to_integer(unsigned(addr_i(index_size(IMEM_SIZE/2) downto 1))); -- word aligned
+  addr   <= to_integer(unsigned(addr_i(index_size_f(IMEM_SIZE/2) downto 1))); -- word aligned
 
 
   -- Memory Access ------------------------------------------------------------
   -- -----------------------------------------------------------------------------
   imem_file_access: process(clk_i)
   begin
+    -- check max size --
+    if (IMEM_SIZE > 48*1024) then
+      assert false report "I-mem size out of range! Max 48kB!" severity error;
+    end if;
+    -- actual memory access --
     if rising_edge(clk_i) then
       rden <= rden_i and acc_en;
+      if (acc_en = '1') then -- reduce switching activity when not accessed
+        if (IMEM_AS_ROM = true) then -- implement IMEM as true ROM
+          rdata(07 downto 0) <= imem_file_rom_l(addr);
+          rdata(15 downto 8) <= imem_file_rom_h(addr);
 
-      -- write access --
-      if (IMEM_AS_ROM = false) then -- implement IMEM as true RAM?
-        if (acc_en = '1') and (upen_i = '1') then -- valid write access at all?
-          if (wren_i(0) = '1') then -- write low byte
-            if (is_power_of_two(IMEM_SIZE, 16) = true) then
-              if (BOOTLD_USE = true) then -- use non-initialized memory
-                imem_file_noinit_l(addr) <= data_i(07 downto 0);
-              else -- use pre-initialized memory, since no bootloader is available
-                imem_file_l(addr) <= data_i(07 downto 0);
-              end if;
-            -- modified write-access: to prevent simulation errors when IMEM_SIZE is not a power of 2 --
-            elsif (addr < IMEM_SIZE/2) then
-              if (BOOTLD_USE = true) then -- use non-initialized memory
-                imem_file_noinit_l(addr) <= data_i(07 downto 0);
-              else -- use pre-initialized memory, since no bootloader is available
-                imem_file_l(addr) <= data_i(07 downto 0);
-              end if;
-            else
-              report "IMEM write access out of range since IMEM_SIZE is not a power of 2!" severity error;
-            end if;
+        elsif (BOOTLD_USE = true) then -- implement IMEM as non-initialized RAM
+          if (wren_i(0) = '1') and (upen_i = '1') then
+            imem_file_ram_l(addr) <= data_i(07 downto 0);
           end if;
+          rdata(07 downto 0) <= imem_file_ram_l(addr);
+          if (wren_i(1) = '1') and (upen_i = '1') then
+            imem_file_ram_h(addr) <= data_i(15 downto 8);
+          end if;
+          rdata(15 downto 8) <= imem_file_ram_h(addr);
 
-          if (wren_i(1) = '1') then -- write high byte
-            if (is_power_of_two(IMEM_SIZE, 16) = true) then
-              if (BOOTLD_USE = true) then -- use non-initialized memory
-                imem_file_noinit_h(addr) <= data_i(15 downto 8);
-              else -- use pre-initialized memory, since no bootloader is available
-                imem_file_h(addr) <= data_i(15 downto 8);
-              end if;
-            -- modified write-access: to prevent simulation errors when IMEM_SIZE is not a power of 2 --
-            elsif (addr < IMEM_SIZE/2) then
-              if (BOOTLD_USE = true) then -- use non-initialized memory
-                imem_file_noinit_h(addr) <= data_i(15 downto 8);
-              else -- use pre-initialized memory, since no bootloader is available
-                imem_file_h(addr) <= data_i(15 downto 8);
-              end if;
-            else
-              report "IMEM write access out of range since IMEM_SIZE is not a power of 2!" severity error;
-            end if;
+        else -- implement IMEM as PRE-INITIALIZED RAM
+          if (wren_i(0) = '1') and (upen_i = '1') then
+            imem_file_init_ram_l(addr) <= data_i(07 downto 0);
           end if;
-        end if;
-      end if;
-
-      -- read access --
-      if (is_power_of_two(IMEM_SIZE, 16) = false) then
-        -- modified read-access: to prevent simulation errors when IMEM_SIZE is not a power of 2 --
-        if (addr < IMEM_SIZE/2) then
-          if (BOOTLD_USE = true) then -- use non-initialized memory
-            rdata <= imem_file_noinit_h(addr) & imem_file_noinit_l(addr);
-          else -- use pre-initialized memory, since no bootloader is available
-            rdata <= imem_file_h(addr) & imem_file_l(addr);
+          rdata(07 downto 0) <= imem_file_init_ram_l(addr);
+          if (wren_i(1) = '1') and (upen_i = '1') then
+            imem_file_init_ram_h(addr) <= data_i(15 downto 8);
           end if;
-        else
-          if ((rden_i and acc_en) = '1') then
-            report "IMEM read access out of range since IMEM_SIZE is not a power of 2!" severity error;
-          end if;
-          rdata <= (others => '-');
-        end if;
-      else
-        if (BOOTLD_USE = true) then -- use non-initialized memory
-          rdata <= imem_file_noinit_h(addr) & imem_file_noinit_l(addr);
-        else -- use pre-initialized memory, since no bootloader is available
-          rdata <= imem_file_h(addr) & imem_file_l(addr);
+          rdata(15 downto 8) <= imem_file_init_ram_h(addr);
         end if;
       end if;
     end if;
   end process imem_file_access;
 
   -- output gate --
-  data_o <= rdata when (rden = '1') else x"0000";
+  data_o <= rdata when (rden = '1') else (others => '0');
 
 
 end neo430_imem_rtl;

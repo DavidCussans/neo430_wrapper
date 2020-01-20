@@ -1,7 +1,10 @@
 -- #################################################################################################
 -- #  << NEO430 - High-Precision Timer >>                                                          #
 -- # ********************************************************************************************* #
--- #  Configure THRES before enabling the timer to prevent false interrupt requests.               #
+-- # This timer uses a configurable prescaler to increment an internal 16-bit counter. When the    #
+-- # counter value reaches the programmable threshold an interrupt can be triggered. Optionally,   #
+-- # the counter can be automatically reset when reaching the threshold value to restart counting. #
+-- # Configure THRES before enabling the timer to prevent false interrupt requests.                #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -21,7 +24,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               23.12.2017  #
+-- #  tephan Nolting, Hannover, Germany                                                 10.12.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -36,7 +39,7 @@ entity neo430_timer is
     -- host access --
     clk_i       : in  std_ulogic; -- global clock line
     rden_i      : in  std_ulogic; -- read enable
-    wren_i      : in  std_ulogic_vector(01 downto 0); -- write enable
+    wren_i      : in  std_ulogic; -- write enable
     addr_i      : in  std_ulogic_vector(15 downto 0); -- address
     data_i      : in  std_ulogic_vector(15 downto 0); -- data in
     data_o      : out std_ulogic_vector(15 downto 0); -- data out
@@ -51,16 +54,17 @@ end neo430_timer;
 architecture neo430_timer_rtl of neo430_timer is
 
   -- IO space: module base address --
-  constant hi_abb_c : natural := index_size(io_size_c)-1; -- high address boundary bit
-  constant lo_abb_c : natural := index_size(timer_size_c); -- low address boundary bit
+  constant hi_abb_c : natural := index_size_f(io_size_c)-1; -- high address boundary bit
+  constant lo_abb_c : natural := index_size_f(timer_size_c); -- low address boundary bit
 
   -- control reg bits --
   constant ctrl_en_bit_c     : natural := 0; -- r/w: timer enable
   constant ctrl_arst_bit_c   : natural := 1; -- r/w: auto reset on match
   constant ctrl_irq_en_bit_c : natural := 2; -- r/w: interrupt enable
-  constant ctrl_prsc0_bit_c  : natural := 3; -- r/w: prescaler select bit 0
-  constant ctrl_prsc1_bit_c  : natural := 4; -- r/w: prescaler select bit 1
-  constant ctrl_prsc2_bit_c  : natural := 5; -- r/w: prescaler select bit 2
+  constant ctrl_run_c        : natural := 3; -- r/w: start/stop timer
+  constant ctrl_prsc0_bit_c  : natural := 4; -- r/w: prescaler select bit 0
+  constant ctrl_prsc1_bit_c  : natural := 5; -- r/w: prescaler select bit 1
+  constant ctrl_prsc2_bit_c  : natural := 6; -- r/w: prescaler select bit 2
 
   -- access control --
   signal acc_en : std_ulogic; -- module access enable
@@ -68,12 +72,12 @@ architecture neo430_timer_rtl of neo430_timer is
   signal wr_en  : std_ulogic; -- word write enable
 
   -- timer regs --
-  signal cnt  : std_ulogic_vector(15 downto 0);
-  signal thres : std_ulogic_vector(15 downto 0);
-  signal ctrl : std_ulogic_vector(05 downto 0);
+  signal cnt   : std_ulogic_vector(15 downto 0); -- r/-: counter register
+  signal thres : std_ulogic_vector(15 downto 0); -- r/w: threshold register 
+  signal ctrl  : std_ulogic_vector(06 downto 0); -- r/w: control register 
 
   -- prescaler clock generator --
-  signal prsc_tick, prsc_sel, prsc_sel_ff : std_ulogic;
+  signal prsc_tick : std_ulogic;
 
   -- timer control --
   signal match       : std_ulogic; -- thres = cnt
@@ -86,52 +90,57 @@ begin
   -- -----------------------------------------------------------------------------
   acc_en <= '1' when (addr_i(hi_abb_c downto lo_abb_c) = timer_base_c(hi_abb_c downto lo_abb_c)) else '0';
   addr   <= timer_base_c(15 downto lo_abb_c) & addr_i(lo_abb_c-1 downto 1) & '0'; -- word aligned
-  wr_en  <= acc_en and wren_i(1) and wren_i(0);
+  wr_en  <= acc_en and wren_i;
 
 
-  -- Write access (and timer update) ------------------------------------------
+  -- Write access -------------------------------------------------------------
   -- -----------------------------------------------------------------------------
   wr_access: process(clk_i)
   begin
     if rising_edge(clk_i) then
-      -- edge detector --
-      irq_fire_ff <= irq_fire;
-      -- tick generator --
-      prsc_sel_ff <= prsc_sel;
-      -- timer reg --
-      if (wr_en = '1') and (addr = timer_cnt_addr_c) then
-        cnt <= data_i;
-      elsif (ctrl(ctrl_en_bit_c) = '1') then
-        if (match = '1') and (ctrl(ctrl_arst_bit_c) = '1') then -- match?
-          cnt <= x"0000";
-        elsif (match = '0') and (prsc_tick = '1') then -- count++ if no match
-          cnt <= std_ulogic_vector(unsigned(cnt) + 1);
-        end if;
-      end if;
-      -- control & threshold --
       if (wr_en = '1') then
-        case addr is
-          when timer_thres_addr_c =>
-            thres <= data_i;
-          when timer_ctrl_addr_c =>
-            ctrl(ctrl_en_bit_c)     <= data_i(ctrl_en_bit_c);
-            ctrl(ctrl_arst_bit_c)   <= data_i(ctrl_arst_bit_c);
-            ctrl(ctrl_irq_en_bit_c) <= data_i(ctrl_irq_en_bit_c);
-            ctrl(ctrl_prsc0_bit_c)  <= data_i(ctrl_prsc0_bit_c);
-            ctrl(ctrl_prsc1_bit_c)  <= data_i(ctrl_prsc1_bit_c);
-            ctrl(ctrl_prsc2_bit_c)  <= data_i(ctrl_prsc2_bit_c);
-          when others => NULL;
-        end case;
+        if (addr = timer_thres_addr_c) then
+          thres <= data_i;
+        end if;
+        if (addr = timer_ctrl_addr_c) then
+          ctrl(ctrl_en_bit_c)     <= data_i(ctrl_en_bit_c);
+          ctrl(ctrl_arst_bit_c)   <= data_i(ctrl_arst_bit_c);
+          ctrl(ctrl_irq_en_bit_c) <= data_i(ctrl_irq_en_bit_c);
+          ctrl(ctrl_run_c)        <= data_i(ctrl_run_c);
+          ctrl(ctrl_prsc0_bit_c)  <= data_i(ctrl_prsc0_bit_c);
+          ctrl(ctrl_prsc1_bit_c)  <= data_i(ctrl_prsc1_bit_c);
+          ctrl(ctrl_prsc2_bit_c)  <= data_i(ctrl_prsc2_bit_c);
+        end if;
       end if;
     end if;
   end process wr_access;
 
-  -- timer clock select / edge detection --
-  prsc_sel  <= clkgen_i(to_integer(unsigned(ctrl(ctrl_prsc2_bit_c downto ctrl_prsc0_bit_c))));
-  prsc_tick <= prsc_sel_ff and (not prsc_sel); -- edge detector
+  -- timer clock select --
+  prsc_tick <= clkgen_i(to_integer(unsigned(ctrl(ctrl_prsc2_bit_c downto ctrl_prsc0_bit_c))));
 
   -- enable external clock generator --
   clkgen_en_o <= ctrl(ctrl_en_bit_c);
+
+
+  -- Counter update -----------------------------------------------------------
+  -- -----------------------------------------------------------------------------
+  counter_update: process(clk_i)
+  begin
+    if rising_edge(clk_i) then
+      -- irq edge detector --
+      irq_fire_ff <= irq_fire;
+      -- counter update --
+      if (ctrl(ctrl_en_bit_c) = '0') then -- timer disabled
+        cnt <= (others => '0');
+      elsif (ctrl(ctrl_run_c) = '1') then -- timer enabled, but is it started?
+        if (match = '1') and (ctrl(ctrl_arst_bit_c) = '1') then -- threshold match and auto reset?
+          cnt <= (others => '0');
+        elsif (match = '0') and (prsc_tick = '1') then -- count++
+          cnt <= std_ulogic_vector(unsigned(cnt) + 1);
+        end if;
+      end if;
+    end if;
+  end process counter_update;
 
   -- match --
   match <= '1' when (cnt = thres) else '0';
@@ -150,20 +159,19 @@ begin
     if rising_edge(clk_i) then
       data_o <= (others => '0');
       if (rden_i = '1') and (acc_en = '1') then
-        case addr is
-          when timer_ctrl_addr_c =>
-            data_o(ctrl_en_bit_c)     <= ctrl(ctrl_en_bit_c);
-            data_o(ctrl_arst_bit_c)   <= ctrl(ctrl_arst_bit_c);
-            data_o(ctrl_irq_en_bit_c) <= ctrl(ctrl_irq_en_bit_c);
-            data_o(ctrl_prsc0_bit_c)  <= ctrl(ctrl_prsc0_bit_c);
-            data_o(ctrl_prsc1_bit_c)  <= ctrl(ctrl_prsc1_bit_c);
-            data_o(ctrl_prsc2_bit_c)  <= ctrl(ctrl_prsc2_bit_c);
-          when timer_cnt_addr_c =>
-            data_o <= cnt;
-          when others =>
-        --when timer_thres_addr_c =>
-            data_o <= thres;
-        end case;
+        if (addr = timer_ctrl_addr_c) then
+          data_o(ctrl_en_bit_c)     <= ctrl(ctrl_en_bit_c);
+          data_o(ctrl_arst_bit_c)   <= ctrl(ctrl_arst_bit_c);
+          data_o(ctrl_irq_en_bit_c) <= ctrl(ctrl_irq_en_bit_c);
+          data_o(ctrl_run_c)        <= ctrl(ctrl_run_c);
+          data_o(ctrl_prsc0_bit_c)  <= ctrl(ctrl_prsc0_bit_c);
+          data_o(ctrl_prsc1_bit_c)  <= ctrl(ctrl_prsc1_bit_c);
+          data_o(ctrl_prsc2_bit_c)  <= ctrl(ctrl_prsc2_bit_c);
+        elsif (addr = timer_cnt_addr_c) then
+          data_o <= cnt;
+        else -- timer_thres_addr_c
+          data_o <= thres;
+        end if;
       end if;
     end if;
   end process rd_access;

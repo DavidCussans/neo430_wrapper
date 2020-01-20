@@ -21,14 +21,14 @@
 // # You should have received a copy of the GNU Lesser General Public License along with this      #
 // # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 // # ********************************************************************************************* #
-// #  Stephan Nolting, Hannover, Germany                                               01.12.2017  #
+// # Stephan Nolting, Hannover, Germany                                                 28.11.2019 #
 // #################################################################################################
 
 
 // Libraries
 #include <stdint.h>
 #include <stdlib.h>
-#include "../../lib/neo430/neo430.h"
+#include <neo430.h>
 
 // Configuration
 #define BAUD_RATE 19200
@@ -43,34 +43,33 @@ void print_state(uint16_t d);
 int main(void) {
 
   // setup UART
-  uart_set_baud(BAUD_RATE);
-  USI_CT = (1<<USI_CT_EN);
+  neo430_uart_setup(BAUD_RATE);
 
   // intro text
-  _printf("\nNEO430 Hardware Analysis Tool\n\n");
+  neo430_printf("\nNEO430 Hardware Analysis Tool\n\n");
 
   // General information
   // --------------------------------------------
   // HW version
-  _printf("Hardware version: 0x%x\n", HW_VERSION);
+  neo430_printf("Hardware version: 0x%x\n", HW_VERSION);
 
   // HW user code
-  _printf("User code:        0x%x\n", USER_CODE);
+  neo430_printf("User code:        0x%x\n", USER_CODE);
   
   // Clock speed
   uint32_t clock = CLOCKSPEED_32bit;
-  _printf("Clock speed:      %n Hz\n", clock);
+  neo430_printf("Clock speed:      %n Hz\n", clock);
 
   // ROM/IMEM
-  _printf("IMEM/ROM:         %u bytes @ 0x0000\n", IMEM_SIZE);
+  neo430_printf("IMEM/ROM:         %u bytes @ 0x%x\n", IMEM_SIZE, IMEM_ADDR_BASE);
 
   // RAM/DMEM
-  _printf("DMEM/RAM:         %u bytes @ 0x%x\n", DMEM_SIZE, DMEM_BASE);
+  neo430_printf("DMEM/RAM:         %u bytes @ 0x%x\n", DMEM_SIZE, DMEM_ADDR_BASE);
 
   // UART baud rate
-  uint16_t baud = USI_BAUD & 0x00FF;
+  uint16_t baud = UART_CT & 0x00FF;
   uint16_t prsc;
-  switch ((USI_BAUD >> 8) & 0x0007) {
+  switch ((UART_CT >> 8) & 0x0007) {
     case 0:  prsc = 2; break;
     case 1:  prsc = 4; break;
     case 2:  prsc = 8; break;
@@ -82,49 +81,88 @@ int main(void) {
     default: prsc = 0; break;
   }
   uint32_t baud_value = clock / (uint32_t)(prsc * baud);
-  _printf("UART Baud rate:   %n\n", baud_value);
-
-
-  // Interrupt vectors
-  // --------------------------------------------
-  _printf("\nInterrupt Vectors");
-  _printf("\n(0) IRQVEC_TIMER -> 0x%x", IRQVEC_TIMER);
-  _printf("\n(1) IRQVEC_USART -> 0x%x", IRQVEC_USART);
-  _printf("\n(2) IRQVEC_GPIO  -> 0x%x", IRQVEC_GPIO);
-  _printf("\n(3) IRQVEC_EXT   -> 0x%x", IRQVEC_EXT);
+  neo430_printf("UART Baud rate:   %n\n", baud_value);
 
 
   // System features
   // --------------------------------------------
   uint16_t ft = SYS_FEATURES;
-  _printf("\n\nSystem features\n");
+  neo430_printf("\nSystem features\n");
+
   // CFU
-  _printf("- Multiplier/Divider:    ");
+  neo430_printf("- Multiplier/Divider:    ");
   print_state(ft & (1<<SYS_MULDIV_EN));
+
   // WB32
-  _printf("- Wishbone adapter:      ");
+  neo430_printf("- Wishbone Adapter:      ");
   print_state(ft & (1<<SYS_WB32_EN));
+
   // WDT
-  _printf("- Watchdog timer:        ");
+  neo430_printf("- Watchdog Timer:        ");
   print_state(ft & (1<<SYS_WDT_EN));
+
   // GPIO
-  _printf("- GPIO unit:             ");
+  neo430_printf("- GPIO Unit:             ");
   print_state(ft & (1<<SYS_GPIO_EN));
+
   // TIMER
-  _printf("- High-precision timer:  ");
+  neo430_printf("- High-Precision Timer:  ");
   print_state(ft & (1<<SYS_TIMER_EN));
-  // USART
-  _printf("- USART:                 ");
-  print_state(ft & (1<<SYS_USART_EN));
+
+  // UART
+  neo430_printf("- UART:                  ");
+  print_state(ft & (1<<SYS_UART_EN));
+
+  // SPI
+  neo430_printf("- SPI:                   ");
+  print_state(ft & (1<<SYS_SPI_EN));
+
   // DADD
-  _printf("- DADD instruction:      ");
+  neo430_printf("- DADD Instruction:      ");
   print_state(ft & (1<<SYS_DADD_EN));
+
   // Bootloader installed
-  _printf("- Internal bootloader:   ");
+  neo430_printf("- Internal Bootloader:   ");
   print_state(ft & (1<<SYS_BTLD_EN));
+
   // is IMEM true ROM?
-  _printf("- IMEM as true ROM:      ");
+  neo430_printf("- IMEM as True ROM:      ");
   print_state(ft & (1<<SYS_IROM_EN));
+
+  // CRC
+  neo430_printf("- CRC16/CRC32:           ");
+  print_state(ft & (1<<SYS_CRC_EN));
+
+  // CFU
+  neo430_printf("- Custom Functions Unit: ");
+  print_state(ft & (1<<SYS_CFU_EN));
+
+  // PWM
+  neo430_printf("- PWM Controller:        ");
+  print_state(ft & (1<<SYS_PWM_EN));
+
+  // TWI
+  neo430_printf("- Two Wire Interface:    ");
+  print_state(ft & (1<<SYS_TWI_EN));
+
+  // TRNG
+  neo430_printf("- True Random Generator: ");
+  print_state(ft & (1<<SYS_TRNG_EN));
+
+  // EXIRQ
+  neo430_printf("- External IRQs Ctrl.:   ");
+  print_state(ft & (1<<SYS_EXIRQ_EN));
+
+
+  // Exit
+  // --------------------------------------------
+  neo430_printf("\n\nPress any key to return to bootloader.\n");
+  while(!neo430_uart_char_received());
+
+  if (!(SYS_FEATURES & (1<<SYS_BTLD_EN)))
+    neo430_printf("No bootloader installed!\n");
+  else
+    asm volatile ("mov #0xF000, r0");
 
   return 0;
 }
@@ -136,7 +174,7 @@ int main(void) {
 void print_state(uint16_t d) {
 
   if (d)
-    _printf("ENABLED\n");
+    neo430_printf("synthesized\n");
   else
-    _printf("DISABLED\n");
+    neo430_printf("-\n");
 }

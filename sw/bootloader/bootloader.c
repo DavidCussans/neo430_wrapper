@@ -4,7 +4,7 @@
 // # Boot from IMEM, UART or SPI EEPROM at SPI.CS[0]                                               #
 // #                                                                                               #
 // # UART configuration: 8N1 at 19200 baud                                                         #
-// # Boot EEPROM: SPI, 16-bit addresses, SPI.CS[0], e.g. 25LC512                                   #
+// # Boot EEPROM: SPI, 16-bit addresses (e.g., 25LC512) @ SPI.CS[0]                                #
 // # GPIO.out[0] is used as high-active status LED                                                 #
 // #                                                                                               #
 // # Auto boot sequence after timeout:                                                             #
@@ -29,12 +29,12 @@
 // # You should have received a copy of the GNU Lesser General Public License along with this      #
 // # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 // # ********************************************************************************************* #
-// #  Stephan Nolting, Hannover, Germany                                               28.12.2017  #
+// # Stephan Nolting, Hannover, Germany                                                 10.12.2019 #
 // #################################################################################################
 
 // Libraries
 #include <stdint.h>
-#include "../lib/neo430/neo430.h"
+#include <neo430.h>
 
 // Macros
 #define xstr(a) str(a)
@@ -45,16 +45,21 @@
 #define AUTOBOOT_TIMEOUT 8     // countdown (seconds) to auto boot
 #define STATUS_LED       0     // GPIO.out(0) is status LED
 
-// 25LC512 EEPROM
+// 25LC512 SPI EEPROM
 #define BOOT_EEP_CS      0    // boot EEPROM CS (SPI.CS0)
+#define EEP_IMAGE_BASE   0x00 // base address of NEO430 boot image
 #define EEP_WRITE        0x02 // initialize start of write sequence
 #define EEP_READ         0x03 // initialize start of read sequence
 #define EEP_RDSR         0x05 // read status register
 #define EEP_WREN         0x06 // write enable
 
+// 24LC512 TWI EEPROM
+#define TWI_BOOT_EEP_ADDR_READ 0b10100001 // READ address of TWI boot eeprom
+
 // Image sources
 #define UART_IMAGE       0x00
-#define EEPROM_IMAGE     0x01
+#define EEPROM_IMAGE_SPI 0x01
+#define EEPROM_IMAGE_TWI 0x02
 
 // Error codes
 #define ERROR_EEPROM     0x00 // EEPROM access error
@@ -62,23 +67,23 @@
 #define ERROR_EXECUTABLE 0x02 // invalid executable format
 #define ERROR_SIZE       0x04 // executable is too big
 #define ERROR_CHECKSUM   0x08 // checksum error
-#define ERROR_UNKNOWN    0xFF // unknown error
 
 // Scratch registers - abuse unused IRQ vectors for this ;)
 #define TIMEOUT_CNT IRQVEC_GPIO
-#define VALID_IMAGE IRQVEC_USART
 
 // Function prototypes
-void __attribute__((__interrupt__)) timer_irq_handler(void);
-void start_app(void);
-void print_help(void);
-void core_dump(void);
-void store_eeprom(void);
-void eeprom_write(uint16_t a, uint16_t d);
-uint16_t eeprom_read(uint16_t a);
-void get_image(uint8_t src);
+void     __attribute__((__interrupt__)) timer_irq_handler(void);
+void     __attribute__((__naked__)) start_app(void);
+void     print_help(void);
+void     core_dump(void);
+void     store_eeprom(void);
+void     eeprom_write_word(uint16_t a, uint16_t d);
+void     spi_eeprom_write_byte(uint16_t a, uint8_t b);
+uint8_t  spi_eeprom_read_byte(uint16_t a);
+uint8_t  twi_eeprom_read_byte(uint16_t a);
+void     get_image(uint8_t src);
 uint16_t get_image_word(uint16_t a, uint8_t src);
-void system_error(uint8_t err_code);
+void     __attribute__((__naked__)) system_error(uint8_t err_code);
 
 
 /* ------------------------------------------------------------
@@ -91,84 +96,97 @@ int main(void) {
   // ****************************************************************
 
   // stack setup
-  // -> done in boot_crt0.asm
+  // -> done in boot_crt0
 
   // disable watchdog timer
-  // -> done in boot_crt0.asm
+  neo430_wdt_disable();
 
   // clear status register and disable interrupts, clear interrupt buffer, enable write access to IMEM
   asm volatile ("mov %0, r2" : : "i" ((1<<R_FLAG) | (1<<Q_FLAG)));
 
+  // disable TRNG
+  TRNG_CT = 0;
+
   // disable Wishbone interface
   WB32_CT = 0;
 
-  // no valid boot image in IMEM yet
-  VALID_IMAGE = 0;
+  // disable PWM
+  PWM_CT = 0;
+
+  // disable TWI
+  TWI_CT = 0;
+
+  // disable EXIRQ
+  EXIRQ_CT = 0;
 
   // init timer interrupt vector
   IRQVEC_TIMER = (uint16_t)(&timer_irq_handler); // timer match
 
   // init GPIO
-  gpio_port_set(1<<STATUS_LED); // activate status LED, clear all others
-//GPIO_CT = 0; // disable all pin change IRQs
+  GPIO_IRQMASK = 0; // no pin change interrupt please, thanks
+  neo430_gpio_port_set(1<<STATUS_LED); // activate status LED, clear all others
 
-  // set Baud rate & init USART control register:
-  // enable USART, no IRQs, SPI clock mode 0, 1/1024 SPI speed, disable all 6 SPI CS lines (set high)
-  USI_CT = 0; // reset USART
-  uart_set_baud(BAUD_RATE);
-  USI_CT = (1<<USI_CT_EN)  | (5<<USI_CT_SPIPRSC0);
-  spi_trans(0); // clear SPI RTX buffer
-  uart_char_read(); // clear UART RX buffer
+  // set Baud rate & init UART control register:
+  // enable UART, no IRQs
+  neo430_uart_setup(BAUD_RATE);
+  neo430_uart_char_read(); // clear UART RX buffer
+
+  // set SPI config:
+  // enable SPI, no IRQs, MSB first, SPI clock mode 0, 1/128 SPI speed, disable all 6 SPI CS lines (set high)
+  neo430_spi_enable(SPI_PRSC_64); // this also resets the SPI module
+  neo430_spi_trans(0); // clear SPI RTX buffer
 
   // Timeout counter: init timer, irq tick @ ~1Hz (prescaler = 4096)
   // THR = f_main / (1Hz + 4096) -1
   TMR_CT = 0; // reset timer
   //uint32_t clock = CLOCKSPEED_32bit >> 14; // divide by 4096
   TMR_THRES = (CLOCKSPEED_HI << 2) -1; // "fake" ;D
-  // enable timer, auto reset, enable IRQ, prsc = 1:2^16
-  TMR_CT = (1<<TMR_CT_EN) | (1<<TMR_CT_ARST) | (1<<TMR_CT_IRQ) | ((16-1)<<TMR_CT_PRSC0);
-  TMR_CNT = 0;
-  TIMEOUT_CNT = 0; // timeout ticker
+  // enable timer, auto reset, enable IRQ, prsc = 1:2^16, start timer
+  TMR_CT = (1<<TMR_CT_EN) | (1<<TMR_CT_ARST) | (1<<TMR_CT_IRQ) | ((16-1)<<TMR_CT_PRSC0) | (1<<TMR_CT_RUN);
+  TIMEOUT_CNT = 0; // console timeout ticker
 
-  clear_irq_buffer(); // clear all pending interrupts
-  eint(); // enable global interrupts
+  neo430_clear_irq_buffer(); // clear all pending interrupts
+  neo430_eint(); // enable global interrupts
 
 
   // ****************************************************************
   // Show bootloader intro and system information
   // ****************************************************************
-  uart_br_print("\n\nNEO430 Bootloader V20171228 by Stephan Nolting\n\n"
-                "HWV: 0x");
-  uart_print_hex_word(HW_VERSION);
-  uart_br_print("\nCLK: 0x");
-  uart_print_hex_word(CLOCKSPEED_HI);
-  uart_print_hex_word(CLOCKSPEED_LO);
-  uart_br_print("\nROM: 0x");
-  uart_print_hex_word(IMEM_SIZE);
-  uart_br_print("\nRAM: 0x");
-  uart_print_hex_word(DMEM_SIZE);
-  uart_br_print("\nSYS: 0x");
-  uart_print_hex_word(SYS_FEATURES);
+  neo430_uart_br_print("\n\n<< NEO430 Bootloader >>\n"
+                       "\n"
+                       "BLV: "__DATE__"\n"
+                       "HWV: 0x");
+  neo430_uart_print_hex_word(HW_VERSION);
+  neo430_uart_br_print("\nUSR: 0x");
+  neo430_uart_print_hex_word(USER_CODE);
+  neo430_uart_br_print("\nCLK: 0x");
+  neo430_uart_print_hex_word(CLOCKSPEED_HI);
+  neo430_uart_print_hex_word(CLOCKSPEED_LO);
+  neo430_uart_br_print("\nROM: 0x");
+  neo430_uart_print_hex_word(IMEM_SIZE);
+  neo430_uart_br_print("\nRAM: 0x");
+  neo430_uart_print_hex_word(DMEM_SIZE);
+  neo430_uart_br_print("\nSYS: 0x");
+  neo430_uart_print_hex_word(SYS_FEATURES);
 
 
   // ****************************************************************
   // Auto boot sequence
   // ****************************************************************
-  uart_br_print("\n\nAutoboot in "xstr(AUTOBOOT_TIMEOUT)"s. Press key to abort.\n");
+  neo430_uart_br_print("\n\nAutoboot in "xstr(AUTOBOOT_TIMEOUT)"s. Press key to abort.\n");
   while (1) { // wait for any key to be pressed or timeout
 
     // timeout? start auto boot sequence
     if (TIMEOUT_CNT == 4*AUTOBOOT_TIMEOUT) { // in 0.25 seconds
-      get_image(EEPROM_IMAGE); // try loading from EEPROM
-      uart_br_print("\n");
+      get_image(EEPROM_IMAGE_SPI); // try loading from EEPROM
+      neo430_uart_br_print("\n");
       start_app(); // start app if loading was successful
     }
 
     // key pressed? -> enter user console
-    if ((USI_UARTRTX & (1<<USI_UARTRTX_UARTRXAVAIL)) != 0)
+    if ((UART_RTX & (1<<UART_RTX_AVAIL)) != 0)
       break;
   }
-  uart_br_print("Aborted.\n\n");
   print_help();
 
 
@@ -177,10 +195,10 @@ int main(void) {
   // ****************************************************************
   while (1) {
 
-    uart_br_print("\nCMD:> ");
-    char c = uart_getc();
-    uart_putc(c); // echo
-    uart_br_print("\n");
+    neo430_uart_br_print("\nCMD:> ");
+    char c = neo430_uart_getc();
+    neo430_uart_putc(c); // echo
+    neo430_uart_br_print("\n");
 
     if (c == 'r') // restart bootloader
       asm volatile ("mov #0xF000, r0"); // jump to beginning of bootloader ROM
@@ -193,14 +211,15 @@ int main(void) {
     else if (c == 'p') // program EEPROM from RAM
       store_eeprom();
     else if (c == 'e') // copy program from EEPROM to RAM
-      get_image(EEPROM_IMAGE);
+      get_image(EEPROM_IMAGE_SPI);
     else if (c == 's') // start program in RAM
       start_app();
+    else if (c == 'c')
+      neo430_uart_br_print("By Stephan Nolting");
     else // unknown command
-      uart_br_print("Bad CMD!");
+      neo430_uart_br_print("Bad CMD!");
   }
 }
-
 
 
 /* ------------------------------------------------------------
@@ -209,29 +228,23 @@ int main(void) {
 void __attribute__((__interrupt__)) timer_irq_handler(void) {
 
   TIMEOUT_CNT++; // increment system ticker
-  gpio_port_toggle(1<<STATUS_LED); // toggle status LED
+  neo430_gpio_port_toggle(1<<STATUS_LED); // toggle status LED
 }
 
 
 /* ------------------------------------------------------------
  * INFO Start application in IMEM
+ * INFO "naked" since this is final...
  * ------------------------------------------------------------ */
-void start_app(void) {
+void __attribute__((__naked__)) start_app(void) {
 
-  // valid image in IMEM?
-  if (VALID_IMAGE == 0) {
-    uart_br_print("Potentially invalid image. Boot anyway (y/n)? ");
-    if (uart_getc() != 'y')
-      return;
-  }
+  neo430_uart_br_print("Booting...\n\n");
+
+  // wait for UART to finish transmitting
+  while ((UART_CT & (1<<UART_CT_TX_BUSY)) != 0);
 
   // deactivate IRQs, no more write access to IMEM, clear all pending IRQs
   asm volatile ("mov %0, r2" : : "i" (1<<Q_FLAG));
-
-  uart_br_print("Booting...\n\n");
-
-  // wait for UART to finish transmitting
-  while ((USI_CT & (1<<USI_CT_UARTTXBSY)) != 0);
 
   // start app in IMEM at address 0x0000
   while (1) {
@@ -245,14 +258,14 @@ void start_app(void) {
  * ------------------------------------------------------------ */
 void print_help(void) {
 
-  uart_br_print("Commands:\n"
-                " d: Dump MEM\n"
-                " e: Load EEPROM\n"
-                " h: Help\n"
-                " p: Store EEPROM\n"
-                " r: Restart\n"
-                " s: Start app\n"
-                " u: Upload");
+  neo430_uart_br_print("CMDs:\n"
+                       " d: Dump MEM\n"
+                       " e: Load EEPROM\n"
+                       " h: Help\n"
+                       " p: Store EEPROM\n"
+                       " r: Restart\n"
+                       " s: Start app\n"
+                       " u: Upload");
 }
 
 
@@ -261,40 +274,25 @@ void print_help(void) {
  * ------------------------------------------------------------ */
 void core_dump(void) {
 
-  uint8_t *pnt = 0;
-  uint8_t i = 0;
-  char c = 0;
-
+  uint16_t *pnt = (uint16_t*)0x0000;
+  uint16_t i = 0, j = 0;
+  
   while (1) {
-    uart_br_print("\n");
-    uart_print_hex_word((uint16_t)pnt); // print address
-    uart_br_print(":  ");
-
+    neo430_uart_br_print("\n");
+    neo430_uart_print_hex_word((uint16_t)pnt); // print address
+    neo430_uart_br_print(":  ");
+  
     // print hexadecimal data
     for (i=0; i<16; i++) {
-      uart_print_hex_byte(*(pnt+i));
-      uart_putc(' ');
+      neo430_uart_print_hex_word(*pnt++);
+      neo430_uart_putc(' ');
     }
-
-    // print ascii data
-    uart_br_print(" |");
-
-    // print single ascii char
-    for (i=0; i<16; i++) {
-      c = (char)*(pnt+i);
-      if ((c >= ' ') && (c <= '~'))
-        uart_putc(c);
-      else
-        uart_putc('.');
-    }
-
-    uart_putc('|');
-
+  
     // user abort or all done?
-    if ((uart_char_received() != 0) || ((uint16_t)pnt == 0xFFF0))
+    if ((neo430_uart_char_received() != 0) || (j == 0xFFE0))
       return;
-
-    pnt += 16;
+  
+    j += 32;
   }
 }
 
@@ -304,104 +302,141 @@ void core_dump(void) {
  * ------------------------------------------------------------ */
 void store_eeprom(void) {
 
-  uart_br_print("Proceed (y/n)?");
-  if (uart_getc() != 'y')
+  neo430_uart_br_print("Proceed (y/n)?");
+  if (neo430_uart_getc() != 'y')
     return;
 
-  uart_br_print("\nWriting... ");
+  neo430_uart_br_print("\nWriting... ");
 
-  spi_cs_en(BOOT_EEP_CS);
-  spi_trans(EEP_WREN); // write enable
-  spi_cs_dis(BOOT_EEP_CS);
+  neo430_spi_cs_en(BOOT_EEP_CS);
+  neo430_spi_trans(EEP_WREN); // write enable
+  neo430_spi_cs_dis();
 
   // check if eeprom ready (or available at all)
-  spi_cs_en(BOOT_EEP_CS);
-  spi_trans(EEP_RDSR); // read status register CMD
-  uint8_t b = spi_trans(0x00); // read status register data
-  spi_cs_dis(BOOT_EEP_CS);
+  neo430_spi_cs_en(BOOT_EEP_CS);
+  neo430_spi_trans(EEP_RDSR); // read status register CMD
+  uint8_t b = neo430_spi_trans(0x00); // read status register data
+  neo430_spi_cs_dis();
 
   if ((b & 0x8F) != 0x02)
     system_error(ERROR_EEPROM);
 
-  // write signature
-  eeprom_write(0x0000, 0xCAFE);
+  // write EXE signature
+  eeprom_write_word(EEP_IMAGE_BASE + 0, 0xCAFE);
 
   // write size
   uint16_t end = IMEM_SIZE;
-  eeprom_write(0x0002, end);
+  eeprom_write_word(EEP_IMAGE_BASE + 2, end);
 
   // store data from IMEM and update checksum
-  uint16_t *mem_pnt = 0;
-  uint16_t eep_index = 0x0006;
   uint16_t checksum = 0;
-  uint16_t d = 0;
-  while ((uint16_t)mem_pnt < end) {
-    d = *mem_pnt;
-    eeprom_write(eep_index, d);
+  uint16_t i = 0;
+  uint16_t *pnt = (uint16_t*)0x0000;;
+
+  while (i < end) {
+    uint16_t d = (uint16_t)*pnt++;
     checksum ^= d;
-    mem_pnt++;
-    eep_index += 2;
+    eeprom_write_word(EEP_IMAGE_BASE + 6 + i, d);
+    i+= 2;
   }
 
   // write checksum
-  eeprom_write(0x0004, checksum);
+  eeprom_write_word(EEP_IMAGE_BASE + 4, checksum);
 
-  uart_br_print("OK");
+  neo430_uart_br_print("OK");
 }
 
 
 /* ------------------------------------------------------------
- * INFO EEPROM write data
+ * INFO EEPROM write data word
  * PARAM a destination address (16 bit)
  * PARAM d word to be written
  * ------------------------------------------------------------ */
-void eeprom_write(uint16_t a, uint16_t d) {
+void eeprom_write_word(uint16_t a, uint16_t d) {
 
-  spi_cs_en(BOOT_EEP_CS);
-  spi_trans(EEP_WREN); // write enable
-  spi_cs_dis(BOOT_EEP_CS);
-
-  spi_cs_en(BOOT_EEP_CS);
-  spi_trans(EEP_WRITE); // byte write instruction
-  spi_trans((uint8_t)(a >> 8));
-  spi_trans((uint8_t)(a >> 0));
-  spi_trans((uint8_t)(d >> 8));
-  spi_trans((uint8_t)(d >> 0));
-  spi_cs_dis(BOOT_EEP_CS);
-
-  // wait for write to finish
-  uint8_t s = 0;
-  do {
-    spi_cs_en(BOOT_EEP_CS);
-    spi_trans(EEP_RDSR); // read status register CMD
-    s = spi_trans(0x00);
-    spi_cs_dis(BOOT_EEP_CS);
-  } while (s & 0x01); // check WIP flag
+  uint8_t lo = (uint8_t)(d);
+  uint8_t hi = (uint8_t)(d >> 8);
+  
+  spi_eeprom_write_byte(a+0, hi);
+  spi_eeprom_write_byte(a+1, lo);
 }
 
 
 /* ------------------------------------------------------------
- * INFO EEPROM read data
+ * INFO SPI EEPROM write single byte
  * PARAM a destination address (16 bit)
- * RETURN word read data
+ * PARAM b byte to be written
  * ------------------------------------------------------------ */
-uint16_t eeprom_read(uint16_t a) {
+void spi_eeprom_write_byte(uint16_t a, uint8_t b) {
 
-  spi_cs_en(BOOT_EEP_CS);
-  spi_trans(EEP_READ); // byte read instruction
-  spi_trans((uint8_t)(a >> 8));
-  spi_trans((uint8_t)(a >> 0));
-  uint8_t b0 = spi_trans(0x00);
-  uint8_t b1 = spi_trans(0x00);
-  spi_cs_dis(BOOT_EEP_CS);
+  neo430_spi_cs_en(BOOT_EEP_CS);
+  neo430_spi_trans(EEP_WREN); // write enable
+  neo430_spi_cs_dis();
 
-  return __combine_bytes(b0, b1);
+  neo430_spi_cs_en(BOOT_EEP_CS);
+  neo430_spi_trans(EEP_WRITE); // byte write instruction
+  neo430_spi_trans((uint8_t)(a >> 8));
+  neo430_spi_trans((uint8_t)(a >> 0));
+  neo430_spi_trans(b);
+  neo430_spi_cs_dis();
+
+  // wait for write to finish
+  while(1) {
+    neo430_spi_cs_en(BOOT_EEP_CS);
+    neo430_spi_trans(EEP_RDSR); // read status register CMD
+    uint8_t s = neo430_spi_trans(0x00);
+    neo430_spi_cs_dis();
+
+    if ((s & 0x01) == 0) { // check WIP flag
+      break; // done!
+    }
+  }
+}
+
+
+/* ------------------------------------------------------------
+ * INFO SPI EEPROM read data
+ * PARAM a destination address (16 bit)
+ * RETURN byte read data
+ * ------------------------------------------------------------ */
+uint8_t spi_eeprom_read_byte(uint16_t a) {
+
+  neo430_spi_cs_en(BOOT_EEP_CS);
+  neo430_spi_trans(EEP_READ); // byte read instruction
+  neo430_spi_trans((uint8_t)(a >> 8));
+  neo430_spi_trans((uint8_t)(a >> 0));
+  uint8_t d = neo430_spi_trans(0);
+  neo430_spi_cs_dis();
+
+  return d;
+}
+
+
+/* ------------------------------------------------------------
+ * INFO TWI EEPROM read data
+ * PARAM a destination address (16 bit)
+ * RETURN byte read data
+ * ------------------------------------------------------------ */
+uint8_t twi_eeprom_read_byte(uint16_t a) {
+
+  uint8_t twi_err = neo430_twi_start_trans(TWI_BOOT_EEP_ADDR_READ);
+  twi_err |= neo430_twi_trans((uint8_t)(a >> 8));
+  twi_err |= neo430_twi_trans((uint8_t)(a >> 0));
+  twi_err |= !neo430_twi_trans(0xFF); // read data
+  uint8_t d = neo430_twi_get_data();
+  neo430_twi_generate_stop();
+
+  //if (twi_err) {
+  //  
+  //}
+
+  return d;
 }
 
 
 /* ------------------------------------------------------------
  * INFO Get IMEM image from SPI EEPROM at SPI.CS0 or from UART
- * PARAM src Image source 0: UART, 1: EEPROM
+ * PARAM src Image source 0: UART, 1: SPI_EEPROM
  * RETURN error code (0 if successful)
  * ------------------------------------------------------------ */
 void get_image(uint8_t src) {
@@ -413,13 +448,14 @@ void get_image(uint8_t src) {
 
   // print intro
   if (src == UART_IMAGE) // boot via UART
-    uart_br_print("Awaiting BINEXE... ");
-  else //if (src == EEPROM_IMAGE)// boot from EEPROM
-    uart_br_print("Loading... ");
+    neo430_uart_br_print("Awaiting BINEXE... ");
+  else //if (src == EEPROM_IMAGE_SPI)// boot from EEPROM
+    neo430_uart_br_print("Loading... ");
 
   // check if valid image
-  if (get_image_word(0x0000, src) != 0xCAFE)
+  if (get_image_word(0x0000, src) != 0xCAFE) {
     system_error(ERROR_EXECUTABLE);
+  }
 
   // image size & check
   uint16_t size  = get_image_word(0x0002, src);
@@ -429,25 +465,25 @@ void get_image(uint8_t src) {
     system_error(ERROR_SIZE);
 
   // transfer program data
-  uint16_t *pnt = 0x0000;
+  uint16_t *pnt = (uint16_t*)0x0000;
   uint16_t addr = 0x0006;
   uint16_t checksum = 0;
-  uint16_t d = 0;
-  while ((uint16_t)pnt < size) {
+  uint16_t d = 0, i = 0;
+  while (i < size/2) { // in words
     d = get_image_word(addr, src);
     checksum ^= d;
     *pnt++ = d;
+    i++;
     addr += 2;
   }
 
   // clear rest of IMEM
-  while((uint16_t)pnt < end)
-    *pnt++ = 0x0000;
+  while(i < end/2) // in words
+    pnt[i++] = 0x0000;
 
   // error during transfer?
   if (checksum == check) {
-    uart_br_print("OK");
-    VALID_IMAGE = 1;
+    neo430_uart_br_print("OK");
   }
   else
     system_error(ERROR_CHECKSUM);
@@ -455,39 +491,48 @@ void get_image(uint8_t src) {
 
 
 /* ------------------------------------------------------------
- * INFO Get image word from EEPROM or UART
+ * INFO Get image word from SPI_EEPROM or UART
  * PARAM a source address (16 bit)
- * PARAM src: 0: UART, 1: EEPROM
+ * PARAM src: 0: UART, 1: SPI_EEPROM
  * RETURN accessed data word
  * ------------------------------------------------------------ */
 uint16_t get_image_word(uint16_t a, uint8_t src) {
 
-  uint16_t d;
+  uint8_t c0 = 0, c1 = 0;
 
-  // reads have to be consecutive when reading from the UART ;)
+  // reads have to be consecutive when reading from the UART
   if (src == UART_IMAGE) { // get image data via UART
-    uint8_t c0 = (uint8_t)uart_getc();
-    uint8_t c1 = (uint8_t)uart_getc();
-    d = __combine_bytes(c0, c1);
+    c0 = (uint8_t)neo430_uart_getc();
+    c1 = (uint8_t)neo430_uart_getc();
   }
-  else //if (src == EEPROM_IMAGE) // get image data from EEPROM
-    d = eeprom_read(a);
+  else {// if (src == EEPROM_IMAGE_SPI) { // get image data from SPI EEPROM
+    c0 = spi_eeprom_read_byte(a+0);
+    c1 = spi_eeprom_read_byte(a+1);
+  }
+//else { // if (src == EEPROM_IMAGE_TWI) // get image data from TWI EEPROM
+//  //c0 = twi_eeprom_read_byte(a+0);
+//  //c1 = twi_eeprom_read_byte(a+1);
+//}
 
-  return d;
+  //uint16_t r = (((uint16_t)c0) << 8) | (((uint16_t)c1) << 0);
+  uint16_t r = neo430_combine_bytes(c0, c1);
+
+  return r;
 }
 
 
 /* ------------------------------------------------------------
  * INFO Print error message, light up status LED and freeze system
+ * INFO "naked" since this is final
  * PARAM error code
  * ------------------------------------------------------------ */
-void system_error(uint8_t err_code){
+void __attribute__((__naked__)) system_error(uint8_t err_code){
 
-  uart_br_print("\a\nERROR ");
-  uart_print_hex_byte(err_code);
+  neo430_uart_br_print("\a\nERR_"); // output error code with annoying bell sound
+  neo430_uart_print_hex_byte(err_code);
 
   asm volatile ("mov #0, r2"); // deactivate IRQs, no more write access to IMEM
-  gpio_port_set(1<<STATUS_LED); // permanently light up status LED
+  neo430_gpio_port_set(1<<STATUS_LED); // permanently light up status LED
 
   while(1); // freeze
 }

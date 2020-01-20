@@ -1,8 +1,8 @@
 -- #################################################################################################
 -- #  << NEO430 - Arithmetical/Logical Unit >>                                                     #
 -- # ********************************************************************************************* #
--- #  Main data processing ALU and temporary operand registers.                                    #
--- #  BCD arithmetic operations need 2 cycles, all other operations only take one cycle.           #
+-- # Main data processing ALU and operand registers.                                               #
+-- # BCD arithmetic operations need 2 cycles, all other operations only take one cycle.            #
 -- # ********************************************************************************************* #
 -- # This file is part of the NEO430 Processor project: https://github.com/stnolting/neo430        #
 -- # Copyright by Stephan Nolting: stnolting@gmail.com                                             #
@@ -22,7 +22,7 @@
 -- # You should have received a copy of the GNU Lesser General Public License along with this      #
 -- # source; if not, download it from https://www.gnu.org/licenses/lgpl-3.0.en.html                #
 -- # ********************************************************************************************* #
--- #  Stephan Nolting, Hannover, Germany                                               27.12.2017  #
+-- # Stephan Nolting, Hannover, Germany                                                 21.11.2019 #
 -- #################################################################################################
 
 library ieee;
@@ -33,9 +33,6 @@ library neo430;
 use neo430.neo430_package.all;
 
 entity neo430_alu is
-  generic (
-    DADD_USE : boolean := true -- implement DADD instruction?
-  );
   port (
     -- global control --
     clk_i  : in  std_ulogic; -- global clock, rising edge
@@ -47,7 +44,7 @@ entity neo430_alu is
     ctrl_i : in  std_ulogic_vector(ctrl_width_c-1 downto 0);
     -- results --
     data_o : out std_ulogic_vector(15 downto 0); -- result
-    flag_o : out std_ulogic_vector(03 downto 0)  -- new ALU flags
+    flag_o : out std_ulogic_vector(04 downto 0)  -- new ALU flags
   );
 end neo430_alu;
 
@@ -58,11 +55,11 @@ architecture neo430_alu_rtl of neo430_alu is
   signal add_res          : std_ulogic_vector(17 downto 0); -- adder/subtractor kernel result
   signal dadd_res         : std_ulogic_vector(16 downto 0); -- decimal adder kernel result
   signal dadd_res_ff      : std_ulogic_vector(16 downto 0); -- decimal adder kernel result buffered
-  signal dadd_res_in      : std_ulogic_vector(16 downto 0); -- decimal adder kernel result buffered
   signal alu_res          : std_ulogic_vector(15 downto 0); -- alu result
-  signal lo_zero, hi_zero : std_ulogic; -- zero detectors
-  signal zero             : std_ulogic; -- final zero flag
-  signal negative         : std_ulogic; -- sign detectors
+  signal data_res         : std_ulogic_vector(15 downto 0); -- final alu result
+  signal zero             : std_ulogic; -- zero detector
+  signal negative         : std_ulogic; -- sign detector
+  signal parity           : std_ulogic; -- parity detector
 
 begin
 
@@ -76,12 +73,15 @@ begin
   operand_register: process(clk_i)
   begin
     if rising_edge(clk_i) then
+      -- operand registers --
       if (ctrl_i(ctrl_alu_opa_wr_c) = '1') then
         op_a_ff <= op_data;
       end if;
       if (ctrl_i(ctrl_alu_opb_wr_c) = '1') then
         op_b_ff <= op_data;
       end if;
+      -- DADD pipeline register --
+      dadd_res_ff <= dadd_res;
     end if;
   end process operand_register;
 
@@ -89,7 +89,7 @@ begin
   -- Binary Arithmetic Core ---------------------------------------------------
   -- -----------------------------------------------------------------------------
   binary_arithmetic_core: process(ctrl_i, op_a_ff, op_b_ff, sreg_i)
-    variable op_a_v, op_b_v     : std_ulogic_vector(15 downto 0);
+    variable op_a_v             : std_ulogic_vector(15 downto 0);
     variable carry_v            : std_ulogic;
     variable carry_null_v       : std_ulogic;
     variable a_lo_v, a_hi_v     : std_ulogic_vector(8 downto 0);
@@ -98,8 +98,7 @@ begin
     variable carry_in_v         : std_ulogic_vector(0 downto 0);
     variable ova_16_v, ova_8_v  : std_ulogic;
   begin
-    -- add/sub control --
-    op_b_v := op_b_ff;
+    -- add/sub control (for operand A= --
     if (ctrl_i(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) = alu_add_c) or 
        (ctrl_i(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) = alu_addc_c) then -- addition
       op_a_v       := op_a_ff;
@@ -120,16 +119,16 @@ begin
     -- operands --
     a_lo_v := '0' & op_a_v(07 downto 0);
     a_hi_v := '0' & op_a_v(15 downto 8);
-    b_lo_v := '0' & op_b_v(07 downto 0);
-    b_hi_v := '0' & op_b_v(15 downto 8);
+    b_lo_v := '0' & op_b_ff(07 downto 0);
+    b_hi_v := '0' & op_b_ff(15 downto 8);
 
     -- adder core --
     add_lo_v := std_ulogic_vector(unsigned(a_lo_v) + unsigned(b_lo_v) + unsigned(carry_in_v(0 downto 0)));
     add_hi_v := std_ulogic_vector(unsigned(a_hi_v) + unsigned(b_hi_v) + unsigned(add_lo_v(8 downto 8)));
 
-    -- overflow logic: plus + plus = minus || minus + minus = plus --
-    ova_16_v := ((not op_a_v(15)) and (not op_b_v(15)) and add_hi_v(7)) or (op_a_v(15) and op_b_v(15) and (not add_hi_v(7)));
-    ova_8_v  := ((not op_a_v(7))  and (not op_b_v(7))  and add_lo_v(7)) or (op_a_v(7)  and op_b_v(7)  and (not add_lo_v(7)));
+    -- overflow logic for the actual ADDER CORE (thx Edward!): plus + plus = minus || minus + minus = plus --
+    ova_16_v := ((not op_a_v(15)) and (not op_b_ff(15)) and add_hi_v(7)) or (op_a_v(15) and op_b_ff(15) and (not add_hi_v(7)));
+    ova_8_v  := ((not op_a_v(7))  and (not op_b_ff(7))  and add_lo_v(7)) or (op_a_v(7)  and op_b_ff(7)  and (not add_lo_v(7)));
 
     -- output --
     add_res(15 downto 0) <= add_hi_v(7 downto 0) & add_lo_v(7 downto 0); -- result
@@ -143,17 +142,16 @@ begin
   end process binary_arithmetic_core;
 
 
-  -- Decimal Arithmetic Core --------------------------------------------------
+  -- Binary Coded Decimal Arithmetic Core -------------------------------------
   -- -----------------------------------------------------------------------------
-  decimal_arithmetic_core: process(op_a_ff, op_b_ff, sreg_i)
-    variable dsum_ll_v, dsum_lh_v : std_ulogic_vector(4 downto 0);
-    variable dsum_hl_v, dsum_hh_v : std_ulogic_vector(4 downto 0);
+  bcd_arithmetic_core: process(op_a_ff, op_b_ff, sreg_i)
+    variable dsum_ll_v, dsum_lh_v, dsum_hl_v, dsum_hh_v : std_ulogic_vector(4 downto 0);
   begin
-    -- four 4-bit CBD adders --
-    dsum_ll_v := bcd_add4(op_a_ff(03 downto 00), op_b_ff(03 downto 00), sreg_i(sreg_c_c));
-    dsum_lh_v := bcd_add4(op_a_ff(07 downto 04), op_b_ff(07 downto 04), dsum_ll_v(4));
-    dsum_hl_v := bcd_add4(op_a_ff(11 downto 08), op_b_ff(11 downto 08), dsum_lh_v(4));
-    dsum_hh_v := bcd_add4(op_a_ff(15 downto 12), op_b_ff(15 downto 12), dsum_hl_v(4));
+    -- four 4-bit BCD adders --
+    dsum_ll_v := bcd_add4_f(op_a_ff(03 downto 00), op_b_ff(03 downto 00), sreg_i(sreg_c_c));
+    dsum_lh_v := bcd_add4_f(op_a_ff(07 downto 04), op_b_ff(07 downto 04), dsum_ll_v(4));
+    dsum_hl_v := bcd_add4_f(op_a_ff(11 downto 08), op_b_ff(11 downto 08), dsum_lh_v(4));
+    dsum_hh_v := bcd_add4_f(op_a_ff(15 downto 12), op_b_ff(15 downto 12), dsum_hl_v(4));
 
     -- output --
     dadd_res(03 downto 00) <= dsum_ll_v(3 downto 0);
@@ -161,25 +159,12 @@ begin
     dadd_res(11 downto 08) <= dsum_hl_v(3 downto 0);
     dadd_res(15 downto 12) <= dsum_hh_v(3 downto 0);
     dadd_res(16) <= dsum_hh_v(4);
-  end process decimal_arithmetic_core;
-
-
-  -- DADD Pipeline Register ---------------------------------------------------
-  -- -----------------------------------------------------------------------------
-  dadd_pipe_reg: process(clk_i)
-  begin
-    if rising_edge(clk_i) then
-      dadd_res_ff <= dadd_res;
-    end if;
-  end process dadd_pipe_reg;
-
-  -- implement DADD instruction? --
-  dadd_res_in <= dadd_res_ff when (DADD_USE = true) else (others => '0');
+  end process bcd_arithmetic_core;
 
 
   -- ALU Core -----------------------------------------------------------------
   -- -----------------------------------------------------------------------------
-  alu_core: process(ctrl_i, op_a_ff, op_b_ff, sreg_i, negative, zero, add_res, dadd_res_in)
+  alu_core: process(ctrl_i, op_a_ff, op_b_ff, sreg_i, negative, zero, parity, add_res, dadd_res_ff)
   begin
     -- defaults --
     alu_res <= op_a_ff;
@@ -187,38 +172,30 @@ begin
     flag_o(flag_v_c) <= sreg_i(sreg_v_c); -- keep
     flag_o(flag_n_c) <= negative; -- update
     flag_o(flag_z_c) <= zero; -- update
+    flag_o(flag_p_c) <= parity; -- update
 
     -- function selection --
     case ctrl_i(ctrl_alu_cmd3_c downto ctrl_alu_cmd0_c) is
-      when alu_add_c => -- r <= a + b
-        alu_res <= add_res(15 downto 0);
-        flag_o(flag_c_c) <= add_res(16);
-        flag_o(flag_v_c) <= add_res(17);
-
-      when alu_addc_c => -- r <= a + b + c
-        alu_res <= add_res(15 downto 0);
-        flag_o(flag_c_c) <= add_res(16);
-        flag_o(flag_v_c) <= add_res(17);
-
-      when alu_sub_c => -- r <= b - a
-        alu_res <= add_res(15 downto 0);
-        flag_o(flag_c_c) <= add_res(16);
-        flag_o(flag_v_c) <= add_res(17);
-
-      when alu_subc_c => -- r <= b - a - 1 + c
+      when alu_add_c | alu_addc_c | alu_sub_c | alu_subc_c | alu_cmp_c =>
+        -- alu_add_c  : r <= a + b
+        -- alu_addc_c : r <= a + b + c
+        -- alu_sub_c  : r <= b - a
+        -- alu_subc_c : r <= b - a - 1 + c
+        -- alu_cmp_c  : b - a (no write back, done by ctrl arbiter)
         alu_res <= add_res(15 downto 0);
         flag_o(flag_c_c) <= add_res(16);
         flag_o(flag_v_c) <= add_res(17);
 
       when alu_dadd_c => -- r <= a + b + c (decimal)
-        alu_res <= dadd_res_in(15 downto 0);
-        flag_o(flag_c_c) <= dadd_res_in(16);
-        flag_o(flag_v_c) <= '0';
-
-      when alu_cmp_c => -- b - a (no write back, done by ctrl arbiter)
-        alu_res <= add_res(15 downto 0);
-        flag_o(flag_c_c) <= add_res(16);
-        flag_o(flag_v_c) <= add_res(17);
+        if (use_dadd_cmd_c = true) then -- implement DADD instruction at all?
+          alu_res <= dadd_res_ff(15 downto 0);
+          flag_o(flag_c_c) <= dadd_res_ff(16);
+          flag_o(flag_v_c) <= '0';
+        else -- output is undefined when DADD instruction is disabled
+          alu_res <= (others => '-');
+          flag_o(flag_c_c) <= '-';
+          flag_o(flag_v_c) <= '-';
+        end if;
 
       when alu_and_c => -- r <= a & b
         alu_res <= op_a_ff and op_b_ff;
@@ -235,35 +212,36 @@ begin
 
       when alu_bic_c => -- r <= !a & b
         alu_res <= (not op_a_ff) and op_b_ff;
-        flag_o(flag_c_c) <= sreg_i(sreg_c_c);
-        flag_o(flag_v_c) <= sreg_i(sreg_v_c);
-        flag_o(flag_n_c) <= sreg_i(sreg_n_c);
-        flag_o(flag_z_c) <= sreg_i(sreg_z_c);
+        flag_o(flag_c_c) <= sreg_i(sreg_c_c); -- keep
+        flag_o(flag_v_c) <= sreg_i(sreg_v_c); -- keep
+        flag_o(flag_n_c) <= sreg_i(sreg_n_c); -- keep
+        flag_o(flag_z_c) <= sreg_i(sreg_z_c); -- keep
 
       when alu_bis_c => -- r <= a | b
         alu_res <= op_a_ff or op_b_ff;
-        flag_o(flag_c_c) <= sreg_i(sreg_c_c);
-        flag_o(flag_v_c) <= sreg_i(sreg_v_c);
-        flag_o(flag_n_c) <= sreg_i(sreg_n_c);
-        flag_o(flag_z_c) <= sreg_i(sreg_z_c);
+        flag_o(flag_c_c) <= sreg_i(sreg_c_c); -- keep
+        flag_o(flag_v_c) <= sreg_i(sreg_v_c); -- keep
+        flag_o(flag_n_c) <= sreg_i(sreg_n_c); -- keep
+        flag_o(flag_z_c) <= sreg_i(sreg_z_c); -- keep
 
       when alu_bit_c => -- r <= a & b (no write back, done by ctrl arbiter)
         alu_res <= op_a_ff and op_b_ff;
         flag_o(flag_c_c) <= not zero;
         flag_o(flag_v_c) <= '0';
 
-      when alu_rra_c => -- r <= a >> 1, rotate right arithmetically
-        alu_res <= op_a_ff(15) & op_a_ff(15 downto 1); -- word mode
-        if (ctrl_i(ctrl_alu_bw_c) = '1') then -- byte mode
-          alu_res(7) <= op_a_ff(7);
-        end if;
-        flag_o(flag_c_c) <= op_a_ff(0);
-        flag_o(flag_v_c) <= '0';
-
-      when alu_rrc_c => -- r <= a >> 1, rotate right through carry
-        alu_res <= sreg_i(sreg_c_c) & op_a_ff(15 downto 1); -- word mode
-        if (ctrl_i(ctrl_alu_bw_c) = '1') then -- byte mode
-          alu_res(7) <= sreg_i(sreg_c_c);
+      when alu_rra_c | alu_rrc_c =>
+        -- alu_rra_c : r <= a >> 1, rotate right arithmetically
+        -- alu_rrc_c : r <= a >> 1, rotate right through carry
+        if (ctrl_i(ctrl_alu_cmd1_c) = alu_rra_c(1)) then -- alu_rra_c
+          alu_res <= op_a_ff(15) & op_a_ff(15 downto 1); -- word mode
+          if (ctrl_i(ctrl_alu_bw_c) = '1') then -- byte mode
+            alu_res(7) <= op_a_ff(7);
+          end if;
+        else -- alu_rrc_c
+          alu_res <= sreg_i(sreg_c_c) & op_a_ff(15 downto 1); -- word mode
+          if (ctrl_i(ctrl_alu_bw_c) = '1') then -- byte mode
+            alu_res(7) <= sreg_i(sreg_c_c);
+          end if;
         end if;
         flag_o(flag_c_c) <= op_a_ff(0);
         flag_o(flag_v_c) <= '0';
@@ -278,41 +256,39 @@ begin
 
       when alu_swap_c => -- r <= swap bytes of a
         alu_res <= op_a_ff(7 downto 0) & op_a_ff(15 downto 8);
-        flag_o(flag_c_c) <= sreg_i(sreg_c_c);
-        flag_o(flag_v_c) <= sreg_i(sreg_v_c);
-        flag_o(flag_n_c) <= sreg_i(sreg_n_c);
-        flag_o(flag_z_c) <= sreg_i(sreg_z_c);
+        flag_o(flag_c_c) <= sreg_i(sreg_c_c); -- keep
+        flag_o(flag_v_c) <= sreg_i(sreg_v_c); -- keep
+        flag_o(flag_n_c) <= sreg_i(sreg_n_c); -- keep
+        flag_o(flag_z_c) <= sreg_i(sreg_z_c); -- keep
 
-      when alu_mov_c => -- r <= a
-        alu_res <= op_a_ff;
-        flag_o(flag_c_c) <= sreg_i(sreg_c_c);
-        flag_o(flag_v_c) <= sreg_i(sreg_v_c);
-        flag_o(flag_n_c) <= sreg_i(sreg_n_c);
-        flag_o(flag_z_c) <= sreg_i(sreg_z_c);
-
-      when others => -- undefined
+      when others => -- alu_mov_c : r <= a
         alu_res <= op_a_ff;
         flag_o(flag_c_c) <= sreg_i(sreg_c_c); -- keep
         flag_o(flag_v_c) <= sreg_i(sreg_v_c); -- keep
-        flag_o(flag_n_c) <= negative; -- update
-        flag_o(flag_z_c) <= zero; -- update
+        flag_o(flag_n_c) <= sreg_i(sreg_n_c); -- keep
+        flag_o(flag_z_c) <= sreg_i(sreg_z_c); -- keep
     end case;
   end process alu_core;
 
-  -- output and high-byte mask --
-  data_o(07 downto 0) <= alu_res(07 downto 0);
-  data_o(15 downto 8) <= alu_res(15 downto 8) when (ctrl_i(ctrl_alu_bw_c) = '0') else x"00";
 
-
-  -- Additional Flag Logic ----------------------------------------------------
+  -- Post processing logic ----------------------------------------------------
   -- -----------------------------------------------------------------------------
+
+  -- word/byte mode mask --
+  data_res(07 downto 0) <= alu_res(07 downto 0);
+  data_res(15 downto 8) <= alu_res(15 downto 8) when (ctrl_i(ctrl_alu_bw_c) = '0') else x"00";
+
   -- zero flag --
-  lo_zero <= '1' when (alu_res(07 downto 0) = x"00") else '0'; -- zero detector LO byte
-  hi_zero <= '1' when (alu_res(15 downto 8) = x"00") else '0'; -- zero detector HI byte
-  zero    <= lo_zero when (ctrl_i(ctrl_alu_bw_c) = '1') else (lo_zero and hi_zero);
+  zero <= not or_all_f(data_res);
+
+  -- parity flag --
+  parity <= (not xor_all_f(data_res)) when (use_xalu_c = true) else '-'; -- if implemented
 
   -- negative flag --
-  negative <= alu_res(7) when (ctrl_i(ctrl_alu_bw_c) = '1') else alu_res(15);
+  negative <= data_res(7) when (ctrl_i(ctrl_alu_bw_c) = '1') else data_res(15);
+
+  -- final data output --
+  data_o <= data_res;
 
 
 end neo430_alu_rtl;
