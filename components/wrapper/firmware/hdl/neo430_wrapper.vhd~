@@ -1,0 +1,23 @@
+entity neo430_wrapper is
+  
+  generic (
+    CLOCK_SPEED : natural := 12000000);  -- main clock in Hz
+
+  port (
+    clk_i      : in  std_logic;         -- global clock, rising edge
+    rst_i      : in  std_logic;         -- global reset, async, active low
+    uart_txd_o : out std_logic;         -- UART from NEO to host
+    uart_rxd_i : in  std_logic;         -- from host to NEO UART
+    scl_o      : out std_logic;  -- I2C clock ( N.B. No clock stretching )
+    sda_o      : out std_logic;  -- I2C data from NEO ( tri-state at top level )
+    sda_i      : in  std_logic);        -- I2C to NEO
+
+end entity neo430_wrapper;
+
+architecture rtl of neo430_wrapper is
+
+begin  -- architecture rtl
+
+  
+
+end architecture rtl;

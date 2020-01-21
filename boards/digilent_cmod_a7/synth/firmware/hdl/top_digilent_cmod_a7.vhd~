@@ -1,0 +1,79 @@
+--=============================================================================
+--! @file top_digilent_cmod_a7.vhd
+--=============================================================================
+--
+-------------------------------------------------------------------------------
+-- --
+-- University of Bristol, High Energy Physics Group.
+-- --
+------------------------------------------------------------------------------- --
+--
+--! @brief \n
+--! \n
+--
+--! @author David Cussans , David.Cussans@bristol.ac.uk ( phdgc.HEP_Instrumentation (voltar.phy.bris.ac.uk))
+--
+--! @date 18:55:24 12/13/19
+--
+--! @version v0.1
+--
+--! @details
+--!
+--!
+--! <b>Dependencies:</b>\n
+--!
+--! <b>References:</b>\n
+--!
+--! <b>Modified by:</b>\n
+--! Author: 
+-------------------------------------------------------------------------------
+--! \n\n<b>Last changes:</b>\n
+-------------------------------------------------------------------------------
+--! @todo <next thing to do> \n
+--! <another thing to do> \n
+--
+--------------------------------------------------------------------------------
+--
+--
+--
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+USE ieee.numeric_std.all;
+
+ENTITY topLevel IS
+   GENERIC( 
+      G_NUM_INPUTS   : natural := 8;      --number of trigger inputs
+      G_NUM_LEDS     : natural := 9;
+      G_NUM_CTR_BITS : natural := 20;
+      g_TIMEWIDTH    : natural := 16      --! Number of bits in dead-time counter
+   );
+   PORT( 
+      btn             : IN     std_logic_vector (1 DOWNTO 0);
+      spi_tft_miso    : IN     std_logic;
+      sysclk          : IN     std_logic;                                   -- 12 MHz
+      trig_in_n       : IN     std_logic_vector (G_NUM_INPUTS-1 DOWNTO 0);  -- Negative half of LVDS inputs
+      trig_in_p       : IN     std_logic_vector (G_NUM_INPUTS-1 DOWNTO 0);  -- positive side of LVDS
+      uart_txd_in     : IN     std_logic;                                   -- data transmitted from host
+      external_led    : OUT    std_logic_vector (8 DOWNTO 0);
+      i2c_scl         : OUT    std_logic;
+      internal_led    : OUT    std_logic_vector (1 DOWNTO 0);               -- single colour LEDs
+      internal_led0_b : OUT    std_logic;
+      internal_led0_g : OUT    std_logic;
+      internal_led0_r : OUT    std_logic;
+      rst             : OUT    std_logic;
+      spi_card_csn    : OUT    std_logic;
+      spi_tft_clk     : OUT    std_logic;
+      spi_tft_csn     : OUT    std_logic;
+      spi_tft_mosi    : OUT    std_logic;
+      tft_irq         : OUT    std_logic;
+      tft_scl         : OUT    std_logic;
+      trig_out        : OUT    std_logic_vector (1 DOWNTO 0);
+      uart_rxd_out    : OUT    std_logic;                                   -- data received by  host
+      i2c_sda         : INOUT  std_logic;
+      tft_sda         : INOUT  std_logic
+   );
+
+-- Declarations
+
+END ENTITY topLevel ;
+
