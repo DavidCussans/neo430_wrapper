@@ -20,7 +20,7 @@
 
 // Libraries
 #include <stdint.h>
-#include "../../lib/neo430/neo430.h"
+#include <neo430.h>
 
 // Configuration
 #define BAUD_RATE 19200
@@ -31,25 +31,23 @@
 int main(void) {
 
   // setup UART
-  uart_set_baud(BAUD_RATE);
-  USI_CT = (1<<USI_CT_EN);
-
+  neo430_uart_setup(BAUD_RATE);
+  
   // turn off LEDs..
-  GPIO_OUT = 0;
+  //GPIO_OUT = 0;
   
   // intro text
-  _printf("\n\nEcho text - waits for a key then prints value" );
-  _printf(".\n"
-          "Press any key to start.\n");
+  neo430_uart_br_print("\n\nEcho text - waits for a key then prints value\n" );
+  neo430_uart_br_print("Press any key to start.\n");
 
   while(1){
     
-  char c = uart_getc();
-  uart_putc(c);
-  uart_br_print("\n");
+  char c = neo430_uart_getc();
+  neo430_uart_putc(c);
+  neo430_uart_br_print("\n");
 
   // Set bottom 8 bits of GPIO with contents of character.
-  GPIO_OUT = c;
+  //GPIO_OUT = c;
   
   }
 
