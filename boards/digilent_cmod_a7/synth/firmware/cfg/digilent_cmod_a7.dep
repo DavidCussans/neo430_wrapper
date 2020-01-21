@@ -24,6 +24,7 @@
 #-------------------------------------------------------------------------------
 
 setup settings_v7.tcl
+src top_digilent_cmod_a7.vhd 
 include digilent_cmod_a7_infra.dep
 src --cd ../ucf  CmodA7_Master.xdc
 
