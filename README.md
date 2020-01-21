@@ -65,3 +65,5 @@ cd neo430_wrapper/sw/example/prime_numbers
 
 make install
 </pre>
+
+* Finally, build Bitfile following the instructions in [Building Example (for Digilent CMOD A7)](#Building Example (for Digilent CMOD A7))
