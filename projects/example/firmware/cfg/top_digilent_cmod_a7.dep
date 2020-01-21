@@ -1,0 +1,1 @@
+include -c boards/digilent_cmod_a7/synth digilent_cmod_a7.dep
