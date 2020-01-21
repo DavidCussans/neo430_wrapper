@@ -40,7 +40,7 @@ LIBRARY ieee;
 USE ieee.std_logic_1164.all;
 USE ieee.numeric_std.all;
 
-ENTITY topLevel IS
+ENTITY top IS
    GENERIC( 
       G_NUM_INPUTS   : natural := 8;      --number of trigger inputs
       G_NUM_LEDS     : natural := 9;
@@ -55,7 +55,7 @@ ENTITY topLevel IS
       trig_in_p       : IN     std_logic_vector (G_NUM_INPUTS-1 DOWNTO 0);  -- positive side of LVDS
       uart_txd_in     : IN     std_logic;                                   -- data transmitted from host
       external_led    : OUT    std_logic_vector (8 DOWNTO 0);
-      i2c_scl         : OUT    std_logic;
+      i2c_scl         : INOUT    std_logic;
       internal_led    : OUT    std_logic_vector (1 DOWNTO 0);               -- single colour LEDs
       internal_led0_b : OUT    std_logic;
       internal_led0_g : OUT    std_logic;
@@ -75,24 +75,31 @@ ENTITY topLevel IS
 
 -- Declarations
 
-END ENTITY topLevel ;
+END ENTITY top ;
 
-architecture rtl of topLevel is
+architecture rtl of top is
 
+signal s_leds: std_logic_vector(3 downto 0);
+ 
 begin  -- architecture rtl
 
   
 cmp_neo430: entity work.neo430_wrapper
   generic map(
     CLOCK_SPEED => 12000000)              -- main clock in Hz
-  port (
+  port map (
     clk_i      => sysclk, -- global clock, rising edge
     rst_i      => '1',    -- global reset, async, active low
     uart_txd_o => uart_rxd_out,   -- UART from NEO to host
-    uart_rxd_i => uart_txd_in     -- from host to NEO UART
+    uart_rxd_i => uart_txd_in,     -- from host to NEO UART
     leds       => s_leds,
     scl_io     => i2c_scl,
     sda_io     => i2c_sda
     );
+
+internal_led(0) <= s_leds(0);
+  internal_led(1) <= s_leds(1);
+  internal_led0_b <= s_leds(2);
+  internal_led0_r <= s_leds(3);
   
 end architecture rtl;

@@ -23,7 +23,9 @@
 #
 #-------------------------------------------------------------------------------
 
+# Setting for Digilent CMOD A7 35T
+
 @device_family = "artix7"
 @device_name = "xc7a35t"
-@device_package = "csg324"
-@device_speed = "-2"
+@device_package = "cpg236"
+@device_speed = "-1"

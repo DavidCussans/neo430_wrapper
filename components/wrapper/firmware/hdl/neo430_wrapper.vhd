@@ -23,10 +23,12 @@ end entity neo430_wrapper;
 
 architecture rtl of neo430_wrapper is
 
+signal s_pio : std_logic_vector(15 downto 0);
+
 begin  -- architecture rtl
 
   -- -----------------------------------------------------------------------------
-  neo430_test_inst : neo430_top_std_logic
+  neo430_test_inst : entity work.neo430_top_std_logic
     generic map (
       -- general configuration --
       CLOCK_SPEED => CLOCK_SPEED,       -- main clock in Hz
@@ -35,7 +37,7 @@ begin  -- architecture rtl
       -- additional configuration --
       USER_CODE   => x"BEAD",           -- custom user code
       -- module configuration --
-      DADD_USE    => false,  -- implement DADD instruction? (default=true)
+      -- DADD_USE    => false,  -- implement DADD instruction? (default=true)
       MULDIV_USE  => false,  -- implement multiplier/divider unit? (default=true)
       WB32_USE    => false,              -- implement WB32 unit? (default=true)
       WDT_USE     => false,             -- implement WDT? (default=true)
@@ -45,7 +47,8 @@ begin  -- architecture rtl
       TWI_USE     => true,  -- implement two wire serial interface? (default=true)
       CRC_USE     => false,             -- implement CRC unit? (default=true)
       PWM_USE     => false,  -- implement PWM controller? (default=true)
-      EXIRQ_USE   => true,              -- implement EXIRQ? (default=true)
+      EXIRQ_USE   => false,              -- implement EXIRQ? (default=true)
+      SPI_USE     => false, -- implement SPI? (default=true)
       -- boot configuration --
       -- BOOTLD_USE  => true,              -- implement and use bootloader? (default=true)
       -- IMEM_AS_ROM => false              -- implement IMEM as read-only memory? (default=false)
@@ -57,7 +60,7 @@ begin  -- architecture rtl
       clk_i      => clk_i,              -- global clock, rising edge
       rst_i      => rst_i,              -- global reset, async, low-active
       -- gpio --
-      gpio_o     => pio_o,              -- parallel output
+      gpio_o     => s_pio,              -- parallel output
       gpio_i     => x"0000",            -- parallel input
       
       -- serial com --
@@ -92,15 +95,15 @@ begin  -- architecture rtl
 
       -- I2C lines
       twi_sda_io => sda_io,             -- twi serial data line
-      twi_scl_io => scl_o,              -- twi serial clock line
+      twi_scl_io => scl_io,              -- twi serial clock line
 
       -- -- external interrupt --
-      irq_i     => '0',                 -- external interrupt request line
-      irq_ack_o => open  -- external interrupt request acknowledge
+      ext_irq_i     => ( others => '0'),                 -- external interrupt request line
+      ext_ack_o => open  -- external interrupt request acknowledge
       );
 
 
-  leds <= pio_o(3 downto 0);
+  leds <= s_pio(3 downto 0);
 
   -- ipbus_wbus.ipb_addr  <= std_logic_vector("00" & s_addr(s_addr'left downto 2));  -- Convert the byte addresses from the Neo into Word addresses.
   -- ipbus_wbus.ipb_wdata <= std_logic_vector(s_do);

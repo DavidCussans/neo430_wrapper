@@ -1,7 +1,12 @@
+
 src -c neo430: ../../rtl/core/neo430_package.vhd
 src -c neo430: ../../rtl/core/neo430_addr_gen.vhd
 src -c neo430: ../../rtl/core/neo430_alu.vhd
-src -c neo430: ../../rtl/core/neo430_application_image.vhd
+
+# Remember to point to neo430_application_image.vhd from somewhere
+# This one is pulled in from the wrapper....
+src -c neo430_wrapper: ../../rtl/core/neo430_application_image.vhd
+
 src -c neo430: ../../rtl/core/neo430_bootloader_image.vhd
 src -c neo430: ../../rtl/core/neo430_boot_rom.vhd
 src -c neo430: ../../rtl/core/neo430_control.vhd
@@ -21,4 +26,5 @@ src -c neo430: ../../rtl/core/neo430_wb_interface.vhd
 src -c neo430: ../../rtl/core/neo430_wdt.vhd
 
 # Pull in TCL that will put neo430_package etc. into neo430, not work.
-#src neo430.tcl
+setup -f ../cfg/neo430.tcl
+
