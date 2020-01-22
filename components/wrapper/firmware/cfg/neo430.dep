@@ -7,6 +7,9 @@ src -c neo430: ../../rtl/core/neo430_alu.vhd
 # This one is pulled in from the wrapper....
 src -c neo430_wrapper: ../../rtl/core/neo430_application_image.vhd
 
+# There seems to be a couple of bugs in teh S.Nolting version of this file..
+src -c neo430_wrapper: ../../rtl/top_templates/neo430_top_std_logic.vhd
+
 src -c neo430: ../../rtl/core/neo430_bootloader_image.vhd
 src -c neo430: ../../rtl/core/neo430_boot_rom.vhd
 src -c neo430: ../../rtl/core/neo430_control.vhd
@@ -19,7 +22,6 @@ src -c neo430: ../../rtl/core/neo430_reg_file.vhd
 src -c neo430: ../../rtl/core/neo430_sysconfig.vhd
 src -c neo430: ../../rtl/core/neo430_timer.vhd
 src -c neo430: ../../rtl/core/neo430_top.vhd
-src -c neo430: ../../rtl/top_templates/neo430_top_std_logic.vhd
 src -c neo430: ../../rtl/core/neo430_uart.vhd
 src -c neo430: ../../rtl/core/neo430_twi.vhd
 src -c neo430: ../../rtl/core/neo430_wb_interface.vhd
