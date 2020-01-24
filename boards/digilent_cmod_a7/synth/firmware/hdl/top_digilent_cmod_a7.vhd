@@ -89,7 +89,7 @@ cmp_neo430: entity work.neo430_wrapper
     CLOCK_SPEED => 12000000)              -- main clock in Hz
   port map (
     clk_i      => sysclk, -- global clock, rising edge
-    rst_i      => '1',    -- global reset, async, active low
+    rst_i      => '0',    -- global reset, async, active high
     uart_txd_o => uart_rxd_out,   -- UART from NEO to host
     uart_rxd_i => uart_txd_in,     -- from host to NEO UART
     leds       => s_leds,

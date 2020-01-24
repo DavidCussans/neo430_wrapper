@@ -1,25 +1,27 @@
-library ieee;
-use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+USE ieee.numeric_std.all;
 
-library neo430;
-use neo430.neo430_package.all;
+LIBRARY neo430;
+USE neo430.neo430_package.all;
 
-entity neo430_wrapper is
+ENTITY neo430_wrapper IS
+   GENERIC( 
+      CLOCK_SPEED : natural := 12000000
+   );
+   PORT( 
+      clk_i      : IN     std_logic;                      -- global clock, rising edge
+      rst_i      : IN     std_logic;                      -- global reset, async, active high
+      uart_txd_o : OUT    std_logic;                      -- UART from NEO to host
+      uart_rxd_i : IN     std_logic;                      -- from host to NEO UART
+      leds       : OUT    std_logic_vector (3 DOWNTO 0);  -- status LEDs
+      scl_io     : INOUT  std_logic;                      -- I2C clock
+      sda_io     : INOUT  std_logic                       -- I2C data to/from NEO
+   );
 
-  generic (
-    CLOCK_SPEED : natural := 12000000);               -- main clock in Hz
-  port (
-    clk_i      : in    std_logic;       -- global clock, rising edge
-    rst_i      : in    std_logic;       -- global reset, async, active low
-    uart_txd_o : out   std_logic;       -- UART from NEO to host
-    uart_rxd_i : in    std_logic;       -- from host to NEO UART
-    leds       : out   std_logic_vector(3 downto 0);  -- status LEDs
-    scl_io     : inout std_logic;       -- I2C clock 
-    sda_io     : inout std_logic        -- I2C data to/from NEO
-    );
+-- Declarations
 
-end entity neo430_wrapper;
+END ENTITY neo430_wrapper ;
 
 architecture rtl of neo430_wrapper is
 
@@ -58,7 +60,7 @@ begin  -- architecture rtl
     port map (
       -- global control --
       clk_i      => clk_i,              -- global clock, rising edge
-      rst_i      => rst_i,              -- global reset, async, low-active
+      rst_i      => not rst_i,          -- global reset, async, high active
       -- gpio --
       gpio_o     => s_pio,              -- parallel output
       gpio_i     => x"0000",            -- parallel input

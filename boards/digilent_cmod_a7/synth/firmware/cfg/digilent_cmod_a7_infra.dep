@@ -22,7 +22,7 @@
 #       https://ipbus.web.cern.ch/ipbus
 #
 #-------------------------------------------------------------------------------
-src -c components/wrapper neo430_wrapper.vhd
+src --vhdl2008 -c components/wrapper neo430_wrapper.vhd
 
 include -c components/wrapper neo430.dep
 

@@ -1,16 +1,16 @@
-
-src -c neo430: ../../rtl/core/neo430_package.vhd
-src -c neo430: ../../rtl/core/neo430_addr_gen.vhd
-src -c neo430: ../../rtl/core/neo430_alu.vhd
-
 # Remember to point to neo430_application_image.vhd from somewhere
 # This one is pulled in from the wrapper....
-src -c neo430_wrapper: ../../rtl/core/neo430_application_image.vhd
+src -l neo430 -c neo430_wrapper: ../../rtl/core/neo430_application_image.vhd
 
 # There seems to be a couple of bugs in teh S.Nolting version of this file..
 src -c neo430_wrapper: ../../rtl/top_templates/neo430_top_std_logic.vhd
 
-src -c neo430: ../../rtl/core/neo430_bootloader_image.vhd
+src -l neo430 -c neo430: ../../rtl/core/neo430_package.vhd
+src -c neo430: ../../rtl/core/neo430_addr_gen.vhd
+src -c neo430: ../../rtl/core/neo430_alu.vhd
+
+src -l neo430 -c neo430: ../../rtl/core/neo430_bootloader_image.vhd
+
 src -c neo430: ../../rtl/core/neo430_boot_rom.vhd
 src -c neo430: ../../rtl/core/neo430_control.vhd
 src -c neo430: ../../rtl/core/neo430_cpu.vhd
